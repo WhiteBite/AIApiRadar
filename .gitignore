@@ -1,0 +1,41 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Local config / secrets ───────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Database / data files ────────────────────────────────────────────────────
+*.db
+*.sqlite3
+*.session           # Telethon session files
+
+# ── Scratch / analysis artifacts ─────────────────────────────────────────────
+parsed_messages.jsonl
+parse_chat.py
+analyze.py
+scratch_*.py
+
+# ── Chat exports (private data) ──────────────────────────────────────────────
+Экспорт чата/
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor ───────────────────────────────────────────────────────────────────
+.idea/
+*.suo
+*.user

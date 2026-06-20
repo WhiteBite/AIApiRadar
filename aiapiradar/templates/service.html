@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ svc.canonical_domain }} — AiApiRadar{% endblock %}
+{% block content %}
+<p><a href="/">← back</a></p>
+<div class="card">
+  <div class="row1">
+    <span class="name">{{ svc.canonical_domain }}</span>
+    <span>
+      <span class="badge {{ svc.status }}">{{ svc.status }}</span>
+      <span class="badge">{{ svc.type }}</span>
+    </span>
+  </div>
+  <div class="meta">
+    {% if svc.engine %}engine: {{ svc.engine }} · {% endif %}
+    reliability: {{ "%.2f"|format(svc.reliability or 0) }} ·
+    {% if svc.domain_first_seen %}domain first seen: {{ svc.domain_first_seen.date() }} · {% endif %}
+    <a href="https://{{ svc.canonical_domain }}" target="_blank" rel="noopener">visit ↗</a>
+  </div>
+</div>
+
+<h3>Offers</h3>
+{% for o in offers %}
+  <div class="card">
+    <div class="row1">
+      <span class="name">{{ o.type }}{% if o.amount %} · <span class="amount">{{ o.currency or "$" }}{{ o.amount|int }}</span>{% endif %}</span>
+      <span class="score">{{ "%.3f"|format(o.score) }}</span>
+    </div>
+    {% if o.models %}<div class="models">{% for m in o.models %}<span>{{ m }}</span>{% endfor %}</div>{% endif %}
+    {% if o.claim_steps %}<div class="meta">How to claim:</div><pre>{{ o.claim_steps }}</pre>{% endif %}
+    {% if o.requirements %}<div class="meta">Requirements:</div><pre>{{ o.requirements }}</pre>{% endif %}
+    {% if o.url %}<div class="meta"><a href="{{ o.url }}" target="_blank" rel="noopener">open offer ↗</a></div>{% endif %}
+  </div>
+{% endfor %}
+
+<h3>Recent signals</h3>
+<table>
+  <tr><th>source</th><th>observed</th><th>link</th></tr>
+  {% for s in signals %}
+  <tr>
+    <td>{{ s.source }}</td>
+    <td>{{ s.observed_at.strftime("%Y-%m-%d %H:%M") if s.observed_at else "" }}</td>
+    <td>{% if s.source_url %}<a href="{{ s.source_url }}" target="_blank" rel="noopener">{{ s.source_url[:60] }}</a>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

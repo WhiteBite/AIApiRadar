@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block headerstats %}
+  <span class="stats">
+    {{ stats.services }} services · {{ stats.offers }} offers ·
+    <span style="color:var(--good)">{{ stats.active }} active</span> ·
+    <span style="color:var(--bad)">{{ stats.dead }} dead</span>
+  </span>
+{% endblock %}
+
+{% block content %}
+<form class="filters" method="get" action="/">
+  <input type="text" name="q" placeholder="search domain / name…" value="{{ filters.q }}"/>
+  <select name="type">
+    <option value="">any type</option>
+    {% for t in ["relay","saas_trial","saas_promo","model_release","grant","abuse","other"] %}
+      <option value="{{ t }}" {% if filters.type == t %}selected{% endif %}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  <select name="status">
+    <option value="">any status</option>
+    {% for st in ["new","active","dead","unknown"] %}
+      <option value="{{ st }}" {% if filters.status == st %}selected{% endif %}>{{ st }}</option>
+    {% endfor %}
+  </select>
+  <input type="number" name="min_amount" placeholder="min $" value="{{ filters.min_amount }}" style="width:90px"/>
+  <input type="text" name="model" placeholder="model (gpt/claude…)" value="{{ filters.model }}"/>
+  <button type="submit">Filter</button>
+</form>
+
+{% if not offers %}
+  <p class="meta">No offers match. Run collectors and <code>aiapiradar score</code> to populate.</p>
+{% endif %}
+
+{% for o in offers %}
+  <div class="card">
+    <div class="row1">
+      <span class="name">
+        <a href="/services/{{ o.service_id }}">{{ o.domain or o.name }}</a>
+        {% if o.amount %}<span class="amount">{{ o.currency or "$" }}{{ o.amount|int }}</span>{% endif %}
+      </span>
+      <span>
+        <span class="badge {{ o.status }}">{{ o.status }}</span>
+        <span class="badge">{{ o.type }}</span>
+        <span class="score">{{ "%.3f"|format(o.score) }}</span>
+      </span>
+    </div>
+    {% if o.models %}<div class="models">{% for m in o.models %}<span>{{ m }}</span>{% endfor %}</div>{% endif %}
+    <div class="meta">
+      {% if o.engine %}engine: {{ o.engine }} · {% endif %}
+      {% if o.referral_required %}⚠ referral required · {% endif %}
+      {% if o.reliability is not none %}reliability: {{ "%.2f"|format(o.reliability) }} · {% endif %}
+      {% if o.url %}<a href="{{ o.url }}" target="_blank" rel="noopener">open ↗</a>{% endif %}
+    </div>
+  </div>
+{% endfor %}
+{% endblock %}

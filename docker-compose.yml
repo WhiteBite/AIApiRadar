@@ -1,0 +1,52 @@
+# AiApiRadar — two processes sharing one database.
+#   scheduler: runs collectors + watchdog + notifier on intervals
+#   web:       serves the dashboard + JSON API
+#
+# Quick start:
+#   cp .env.example .env   # fill in keys you have (all optional)
+#   docker compose up --build
+#   open http://localhost:8000
+services:
+  scheduler:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      AIRADAR_DB_URL: sqlite:////data/aiapiradar.db
+    volumes:
+      - radar_data:/data
+    command: ["run"]
+    restart: unless-stopped
+
+  web:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      AIRADAR_DB_URL: sqlite:////data/aiapiradar.db
+    volumes:
+      - radar_data:/data
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    depends_on:
+      - scheduler
+
+  # --- Optional: switch to Postgres for concurrent access ---
+  # Set AIRADAR_DB_URL=postgresql+psycopg://radar:radar@db:5432/radar on both
+  # services above and uncomment this block.
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: radar
+  #     POSTGRES_PASSWORD: radar
+  #     POSTGRES_DB: radar
+  #   volumes:
+  #     - pg_data:/var/lib/postgresql/data
+
+volumes:
+  radar_data:
+  # pg_data:

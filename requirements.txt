@@ -1,0 +1,27 @@
+# --- Core (Phase 0-1) ---
+SQLAlchemy>=2.0,<3.0
+pydantic>=2.6
+pydantic-settings>=2.2
+httpx>=0.27
+APScheduler>=3.10
+python-dateutil>=2.9
+
+# --- Classifier / LLM (Phase 1) ---
+openai>=1.30            # OpenAI-compatible client (works with gemini/deepseek/openai)
+
+# --- Collectors (Phase 2+) ---
+feedparser>=6.0         # forum RSS (nodeseek/linux.do/v2ex)
+websocket-client>=1.7   # certstream (CT logs)
+beautifulsoup4>=4.12    # directory/coupon scrapers
+
+# --- API + UI (Phase 4) ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+jinja2>=3.1
+
+# --- Ingest tail (Phase 7) ---
+telethon>=1.34          # Telegram user-client ingest (optional; needs api_id/hash)
+# YouTube uses httpx (no extra dep)
+
+# --- Dev ---
+pytest>=8.0

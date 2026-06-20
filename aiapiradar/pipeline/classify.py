@@ -1,0 +1,168 @@
+"""Classification: turn raw text into a structured Offer description.
+
+Two implementations behind one interface:
+  - HeuristicClassifier: regex/keyword based, zero-cost, always available.
+    Used for offline runs and tests, and as the LLM fallback.
+  - LLMClassifier: OpenAI-compatible chat call returning strict JSON.
+
+get_classifier() picks LLM when an API key is configured, else heuristic.
+"""
+from __future__ import annotations
+
+import json
+import re
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+from ..config import Settings, get_settings
+from ..logging_conf import get_logger
+from ..models import OFFER_TYPES
+from . import prefilter
+
+log = get_logger("classify")
+
+_MODEL_KEYWORDS = [
+    "claude", "opus", "sonnet", "haiku", "gpt", "o1", "o3", "gemini",
+    "glm", "deepseek", "qwen", "mistral", "llama", "grok",
+]
+_AMOUNT_RES = [
+    re.compile(r"\$\s?(\d+(?:[.,]\d+)?)"),
+    re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:刀|美元)"),
+    re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:баллов|кредит\w*|credits?)", re.IGNORECASE),
+]
+_REFERRAL_RE = re.compile(r"[?&](ref|invite|aff|promo|campaignId)=|referral|реф[- ]?ссылк|invite", re.IGNORECASE)
+
+
+class Classification(BaseModel):
+    is_offer: bool = False
+    service_name: Optional[str] = None
+    offer_type: str = "other"
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    models: list[str] = Field(default_factory=list)
+    claim_steps: Optional[str] = None
+    requirements: Optional[str] = None
+    referral_required: bool = False
+    confidence: float = 0.0
+
+    @classmethod
+    def not_offer(cls) -> "Classification":
+        return cls(is_offer=False, confidence=0.0)
+
+
+def _parse_amount(text: str) -> tuple[Optional[float], Optional[str]]:
+    for rx in _AMOUNT_RES:
+        m = rx.search(text)
+        if m:
+            val = float(m.group(1).replace(",", "."))
+            currency = "USD" if rx is _AMOUNT_RES[0] or "刀" in text or "美元" in text else None
+            return val, currency
+    return None, None
+
+
+def _find_models(text: str) -> list[str]:
+    low = text.lower()
+    return sorted({m for m in _MODEL_KEYWORDS if m in low})
+
+
+def _guess_type(text: str, domains: list[str], lang: str) -> str:
+    low = text.lower()
+    if lang == "zh" or any(k in text for k in ("中转", "公益站", "注册送")):
+        return "relay"
+    if "huggingface" in low or "model release" in low or "релиз модел" in low:
+        return "model_release"
+    if ("star" in low or "звезд" in low) and ("github" in low or "репозитор" in low):
+        return "grant"
+    return "saas_trial"
+
+
+class HeuristicClassifier:
+    name = "heuristic"
+
+    def classify(self, text: str, url: Optional[str], lang: str, domains: list[str]) -> Classification:
+        matched, hits = prefilter.match(text)
+        if not matched:
+            return Classification.not_offer()
+        amount, currency = _parse_amount(text)
+        models = _find_models(text)
+        referral = bool(_REFERRAL_RE.search(text)) or bool(url and _REFERRAL_RE.search(url))
+        confidence = 0.45
+        if amount:
+            confidence += 0.25
+        if models:
+            confidence += 0.15
+        name = domains[0].split(".")[0] if domains else None
+        return Classification(
+            is_offer=True,
+            service_name=name,
+            offer_type=_guess_type(text, domains, lang),
+            amount=amount,
+            currency=currency,
+            models=models,
+            referral_required=referral,
+            confidence=min(confidence, 0.95),
+        )
+
+
+_LLM_SYSTEM = (
+    "You classify messages about FREE AI API credits / trials. "
+    "Return STRICT JSON only, matching this schema: "
+    '{"is_offer": bool, "service_name": str|null, "offer_type": one of '
+    f"{list(OFFER_TYPES)}, "
+    '"amount": number|null, "currency": str|null, "models": [str], '
+    '"claim_steps": str|null, "requirements": str|null, '
+    '"referral_required": bool, "confidence": number 0..1}. '
+    "If the message is not about obtaining free/credited AI access, set is_offer=false."
+)
+
+
+class LLMClassifier:
+    name = "llm"
+
+    def __init__(self, settings: Optional[Settings] = None):
+        self.settings = settings or get_settings()
+        self._fallback = HeuristicClassifier()
+        self._client = None
+
+    def _client_lazy(self):
+        if self._client is None:
+            from openai import OpenAI  # lazy: only needed when LLM is enabled
+
+            self._client = OpenAI(
+                base_url=self.settings.llm_base_url,
+                api_key=self.settings.llm_api_key,
+            )
+        return self._client
+
+    def classify(self, text: str, url: Optional[str], lang: str, domains: list[str]) -> Classification:
+        # cheap gate first: don't spend tokens on obvious noise
+        matched, _ = prefilter.match(text)
+        if not matched:
+            return Classification.not_offer()
+        try:
+            client = self._client_lazy()
+            user = f"URL: {url or (domains[0] if domains else 'unknown')}\nTEXT:\n{text[:4000]}"
+            resp = client.chat.completions.create(
+                model=self.settings.llm_model,
+                messages=[
+                    {"role": "system", "content": _LLM_SYSTEM},
+                    {"role": "user", "content": user},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+            )
+            data = json.loads(resp.choices[0].message.content)
+            if data.get("offer_type") not in OFFER_TYPES:
+                data["offer_type"] = "other"
+            return Classification(**data)
+        except Exception:
+            log.exception("LLM classify failed; using heuristic fallback")
+            return self._fallback.classify(text, url, lang, domains)
+
+
+def get_classifier(settings: Optional[Settings] = None):
+    settings = settings or get_settings()
+    if settings.has_llm:
+        return LLMClassifier(settings)
+    return HeuristicClassifier()

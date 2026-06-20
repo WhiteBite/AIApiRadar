@@ -1,0 +1,15 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.db
+*.sqlite3
+.env
+tests/
+Экспорт чата/
+parsed_messages.jsonl
+parse_chat.py
+analyze.py
+*.session
+.git/
