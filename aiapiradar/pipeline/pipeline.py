@@ -9,7 +9,7 @@ from collections import Counter
 from typing import Iterable, Optional
 
 from ..core.signal import Signal as RawSignal
-from ..db import session_scope
+from ..db import get_db
 from ..logging_conf import get_logger
 from . import normalize, prefilter, store
 from .classify import Classification, get_classifier
@@ -24,7 +24,7 @@ class Pipeline:
 
     def process_signals(self, signals: Iterable[RawSignal]) -> dict:
         stats: Counter = Counter()
-        with session_scope() as session:
+        with get_db() as db:
             for raw in signals:
                 stats["seen"] += 1
                 raw, domains = normalize.normalize(raw)
@@ -42,7 +42,7 @@ class Pipeline:
                 if clf.is_offer:
                     stats["offers"] += 1
 
-                result = store.persist(session, raw, clf, domains, self.min_confidence)
+                result = store.persist(db, raw, clf, domains, self.min_confidence)
                 for k, v in result.items():
                     stats[k] += v
         log.info("pipeline processed: %s", dict(stats))

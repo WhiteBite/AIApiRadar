@@ -5,6 +5,10 @@ offer triggers? what relay engine powers it? how old is the domain (crt.sh)?
 These feed the reliability score used by the scorer and watchdog.
 
 Network functions take an httpx.AsyncClient so tests can inject a MockTransport.
+
+enrich_service() accepts either:
+  - (Database, service_id: int, client)   — new protocol path (watchdog)
+  - (Session, Service, client)             — backward compat for legacy tests
 """
 from __future__ import annotations
 
@@ -16,7 +20,7 @@ from typing import Optional
 import httpx
 
 from .logging_conf import get_logger
-from .models import Service, utcnow
+from .models import utcnow
 
 log = get_logger("enrich")
 
@@ -137,7 +141,56 @@ async def crtsh_earliest(domain: str, client: httpx.AsyncClient) -> Optional[dt.
     return None
 
 
-async def enrich_service(session, service: Service, client: httpx.AsyncClient) -> None:
+# ─── Storage helpers (private) ────────────────────────────────────────────────
+
+def _dt_str(d: Optional[dt.datetime]) -> Optional[str]:
+    """Datetime → storage string (naive UTC, SQLAlchemy-compatible format)."""
+    if d is None:
+        return None
+    if d.tzinfo is not None:
+        d = d.astimezone(dt.timezone.utc).replace(tzinfo=None)
+    return d.strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+# ─── New Database-protocol path ───────────────────────────────────────────────
+
+async def _enrich_service_db(db, service_id: int, client: httpx.AsyncClient) -> None:
+    from .db.base import Database
+
+    rows = db.execute("SELECT canonical_domain FROM services WHERE id = ?", [service_id])
+    if not rows:
+        log.warning("enrich_service: service %d not found", service_id)
+        return
+
+    domain = rows[0]["canonical_domain"]
+    p = await probe(domain, client)
+    age = await crtsh_earliest(domain, client)
+    now = utcnow()
+
+    status = "active" if p.alive else "dead"
+    engine = p.engine
+    domain_first_seen = _dt_str(age)
+    age_days = (
+        (now.replace(tzinfo=None) - age.replace(tzinfo=None)).total_seconds() / 86400.0
+        if age else None
+    )
+    rel = reliability_score(p.alive, p.has_pricing, bool(p.engine), age_days)
+
+    db.run(
+        "UPDATE services "
+        "SET status=?, engine=?, reliability=?, domain_first_seen=?, last_checked=? "
+        "WHERE id=?",
+        [status, engine, rel, domain_first_seen, _dt_str(now), service_id],
+    )
+    log.info(
+        "enriched %s status=%s engine=%s reliability=%.2f",
+        domain, status, engine, rel,
+    )
+
+
+# ─── Legacy SQLAlchemy-session path (backward compat) ────────────────────────
+
+async def _enrich_service_orm(session, service, client: httpx.AsyncClient) -> None:
     p = await probe(service.canonical_domain, client)
     age = await crtsh_earliest(service.canonical_domain, client)
     now = utcnow()
@@ -150,5 +203,23 @@ async def enrich_service(session, service: Service, client: httpx.AsyncClient) -
     age_days = (now - age).total_seconds() / 86400.0 if age else None
     service.reliability = reliability_score(p.alive, p.has_pricing, bool(p.engine), age_days)
     service.last_checked = now
-    log.info("enriched %s status=%s engine=%s reliability=%.2f",
-             service.canonical_domain, service.status, service.engine, service.reliability)
+    log.info(
+        "enriched %s status=%s engine=%s reliability=%.2f",
+        service.canonical_domain, service.status, service.engine, service.reliability,
+    )
+
+
+# ─── Public entry point ───────────────────────────────────────────────────────
+
+async def enrich_service(db_or_session, service_or_id, client: httpx.AsyncClient) -> None:
+    """Probe a service and update its fields.
+
+    New usage:   enrich_service(db, service_id, client)
+    Legacy usage: enrich_service(session, service_orm_obj, client)
+    """
+    from .db.base import Database
+
+    if isinstance(db_or_session, Database):
+        await _enrich_service_db(db_or_session, service_or_id, client)
+    else:
+        await _enrich_service_orm(db_or_session, service_or_id, client)

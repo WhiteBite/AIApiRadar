@@ -2,18 +2,20 @@
 
 Dedup rules:
   - Service: unique by canonical_domain.
-  - Offer: one active offer per (service, offer_type); re-observations update it
-    and backfill missing fields rather than creating duplicates.
+  - Offer: one active offer per (service, offer_type); re-observations update
+    it and backfill missing fields rather than creating duplicates.
   - Signal: unique by (source, source_url); skip if already stored.
+
+Uses the platform-agnostic Database protocol — no SQLAlchemy ORM.
 """
 from __future__ import annotations
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+import datetime as dt
+from typing import Optional
 
 from ..core.signal import Signal as RawSignal
+from ..db.base import Database, json_decode, json_encode
 from ..logging_conf import get_logger
-from ..models import LeadMetric, Offer, Service, Signal, utcnow
 from .classify import Classification
 
 log = get_logger("store")
@@ -22,8 +24,8 @@ log = get_logger("store")
 AGGREGATOR_SOURCES = {"telegram", "telegram_ingest"}
 
 
-def compute_lead_hours(first_us, first_agg) -> float | None:
-    """Hours the aggregators lagged behind us. Positive => we were earlier."""
+def compute_lead_hours(first_us, first_agg) -> Optional[float]:
+    """Hours the aggregators lagged behind us.  Positive => we were earlier."""
     if not first_us or not first_agg:
         return None
     a = first_us.replace(tzinfo=None) if first_us.tzinfo else first_us
@@ -31,142 +33,245 @@ def compute_lead_hours(first_us, first_agg) -> float | None:
     return round((b - a).total_seconds() / 3600.0, 2)
 
 
-def _naive(d):
+# ─── Datetime ↔ storage string helpers ───────────────────────────────────────
+
+def _dt_str(d: Optional[dt.datetime]) -> Optional[str]:
+    """Datetime → storage string compatible with SQLAlchemy's SQLite format."""
     if d is None:
         return None
-    return d.replace(tzinfo=None) if d.tzinfo else d
+    if d.tzinfo is not None:
+        d = d.astimezone(dt.timezone.utc).replace(tzinfo=None)
+    return d.strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
-def _update_lead_metric(session, offer: Offer, source: str, observed_at) -> None:
-    lm = session.scalar(select(LeadMetric).where(LeadMetric.offer_id == offer.id))
-    if lm is None:
-        lm = LeadMetric(offer_id=offer.id)
-        session.add(lm)
-        session.flush()
-    observed = _naive(observed_at)
-    if source in AGGREGATOR_SOURCES:
-        cur = _naive(lm.first_seen_in_aggregator)
-        if cur is None or observed < cur:
-            lm.first_seen_in_aggregator = observed
-    else:
-        cur = _naive(lm.first_seen_by_us)
-        if cur is None or observed < cur:
-            lm.first_seen_by_us = observed
-    lm.lead_hours = compute_lead_hours(lm.first_seen_by_us, lm.first_seen_in_aggregator)
+def _dt_parse(s: Optional[str]) -> Optional[dt.datetime]:
+    """Storage string → naive UTC datetime."""
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return dt.datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    try:
+        # Last resort: fromisoformat (handles +00:00 suffix)
+        d = dt.datetime.fromisoformat(s)
+        return d.replace(tzinfo=None) if d.tzinfo else d
+    except ValueError:
+        return None
 
 
-def _get_or_create_service(session: Session, domain: str, clf: Classification) -> Service:
-    svc = session.scalar(select(Service).where(Service.canonical_domain == domain))
-    if svc is None:
-        svc = Service(
-            canonical_domain=domain,
-            name=clf.service_name or domain.split(".")[0],
-            type=clf.offer_type or "other",
-            models=clf.models or None,
-        )
-        session.add(svc)
-        session.flush()
-    return svc
+# ─── Internal helpers ─────────────────────────────────────────────────────────
 
-
-def _get_or_create_offer(session: Session, svc: Service, clf: Classification, url: str | None) -> tuple[Offer, bool]:
-    offer = session.scalar(
-        select(Offer).where(Offer.service_id == svc.id, Offer.type == clf.offer_type)
+def _get_or_create_service(db: Database, domain: str, clf: Classification) -> int:
+    rows = db.execute(
+        "SELECT id FROM services WHERE canonical_domain = ?", [domain]
     )
-    created = False
-    if offer is None:
-        offer = Offer(
-            service_id=svc.id,
-            type=clf.offer_type,
-            amount=clf.amount,
-            currency=clf.currency,
-            models=clf.models or None,
-            claim_steps=clf.claim_steps,
-            requirements=clf.requirements,
-            referral_required=clf.referral_required,
-            url=url,
-        )
-        session.add(offer)
-        session.flush()
-        created = True
-    else:
-        # backfill missing fields from a richer observation
-        offer.amount = offer.amount or clf.amount
-        offer.currency = offer.currency or clf.currency
-        offer.claim_steps = offer.claim_steps or clf.claim_steps
-        offer.requirements = offer.requirements or clf.requirements
-        offer.url = offer.url or url
-        if clf.models and not offer.models:
-            offer.models = clf.models
-        offer.last_verified_at = utcnow()
-    return offer, created
+    if rows:
+        return rows[0]["id"]
+    db.run(
+        "INSERT INTO services (canonical_domain, name, type, models) VALUES (?, ?, ?, ?)",
+        [
+            domain,
+            clf.service_name or domain.split(".")[0],
+            clf.offer_type or "other",
+            json_encode(clf.models or None),
+        ],
+    )
+    return db.execute("SELECT last_insert_rowid() AS id")[0]["id"]
 
+
+def _get_or_create_offer(
+    db: Database,
+    service_id: int,
+    clf: Classification,
+    url: Optional[str],
+) -> tuple[int, bool]:
+    rows = db.execute(
+        "SELECT id, amount, currency, models, claim_steps, requirements, url "
+        "FROM offers WHERE service_id = ? AND type = ?",
+        [service_id, clf.offer_type],
+    )
+    if rows:
+        row = rows[0]
+        offer_id = row["id"]
+        # Backfill missing fields from a richer observation.
+        new_amount = row["amount"] or clf.amount
+        new_currency = row["currency"] or clf.currency
+        new_claim_steps = row["claim_steps"] or clf.claim_steps
+        new_requirements = row["requirements"] or clf.requirements
+        new_url = row["url"] or url
+        existing_models = json_decode(row["models"])
+        new_models = json_encode(existing_models or clf.models or None)
+        if clf.models and not existing_models:
+            new_models = json_encode(clf.models)
+        db.run(
+            "UPDATE offers SET amount=?, currency=?, claim_steps=?, requirements=?, "
+            "url=?, models=?, last_verified_at=? WHERE id=?",
+            [
+                new_amount,
+                new_currency,
+                new_claim_steps,
+                new_requirements,
+                new_url,
+                new_models,
+                _dt_str(dt.datetime.now(dt.timezone.utc)),
+                offer_id,
+            ],
+        )
+        return offer_id, False
+    db.run(
+        "INSERT INTO offers (service_id, type, amount, currency, models, "
+        "claim_steps, requirements, referral_required, url) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            service_id,
+            clf.offer_type,
+            clf.amount,
+            clf.currency,
+            json_encode(clf.models or None),
+            clf.claim_steps,
+            clf.requirements,
+            int(clf.referral_required),
+            url,
+        ],
+    )
+    offer_id = db.execute("SELECT last_insert_rowid() AS id")[0]["id"]
+    return offer_id, True
+
+
+def _update_lead_metric(
+    db: Database,
+    offer_id: int,
+    source: str,
+    observed_at: Optional[dt.datetime],
+) -> None:
+    rows = db.execute(
+        "SELECT id, first_seen_by_us, first_seen_in_aggregator "
+        "FROM lead_metrics WHERE offer_id = ?",
+        [offer_id],
+    )
+    if rows:
+        lm_id = rows[0]["id"]
+        first_seen_by_us = _dt_parse(rows[0]["first_seen_by_us"])
+        first_seen_in_agg = _dt_parse(rows[0]["first_seen_in_aggregator"])
+    else:
+        db.run("INSERT INTO lead_metrics (offer_id) VALUES (?)", [offer_id])
+        lm_id = db.execute("SELECT last_insert_rowid() AS id")[0]["id"]
+        first_seen_by_us = None
+        first_seen_in_agg = None
+
+    # Normalize to naive UTC for comparisons.
+    observed = (
+        observed_at.replace(tzinfo=None) if (observed_at and observed_at.tzinfo) else observed_at
+    )
+
+    if source in AGGREGATOR_SOURCES:
+        if observed is not None and (first_seen_in_agg is None or observed < first_seen_in_agg):
+            first_seen_in_agg = observed
+    else:
+        if observed is not None and (first_seen_by_us is None or observed < first_seen_by_us):
+            first_seen_by_us = observed
+
+    lead_hours = compute_lead_hours(first_seen_by_us, first_seen_in_agg)
+    db.run(
+        "UPDATE lead_metrics SET first_seen_by_us=?, first_seen_in_aggregator=?, "
+        "lead_hours=? WHERE id=?",
+        [_dt_str(first_seen_by_us), _dt_str(first_seen_in_agg), lead_hours, lm_id],
+    )
+
+
+# ─── Public API ───────────────────────────────────────────────────────────────
 
 def persist(
-    session: Session,
+    db: Database,
     raw: RawSignal,
     clf: Classification,
     domains: list[str],
     min_confidence: float = 0.4,
 ) -> dict:
-    """Store one classified signal. Returns a small stats dict."""
-    stats = {"signals": 0, "offers_created": 0, "offers_updated": 0, "dup": 0}
+    """Store one classified signal.  Returns a small stats dict."""
+    stats: dict[str, int] = {
+        "signals": 0,
+        "offers_created": 0,
+        "offers_updated": 0,
+        "dup": 0,
+    }
 
     # Signal-level dedup by (source, source_url).
     if raw.source_url:
-        exists = session.scalar(
-            select(Signal.id).where(Signal.source == raw.source, Signal.source_url == raw.source_url)
+        dups = db.execute(
+            "SELECT id FROM signals WHERE source = ? AND source_url = ?",
+            [raw.source, raw.source_url],
         )
-        if exists:
+        if dups:
             stats["dup"] = 1
             return stats
 
-    svc = None
-    offer = None
+    service_id: Optional[int] = None
+    offer_id: Optional[int] = None
+
     if clf.is_offer and clf.confidence >= min_confidence and domains:
-        svc = _get_or_create_service(session, domains[0], clf)
-        offer, created = _get_or_create_offer(session, svc, clf, raw.url)
+        service_id = _get_or_create_service(db, domains[0], clf)
+        offer_id, created = _get_or_create_offer(db, service_id, clf, raw.url)
         stats["offers_created"] = int(created)
         stats["offers_updated"] = int(not created)
-        _update_lead_metric(session, offer, raw.source, raw.observed_at)
+        _update_lead_metric(db, offer_id, raw.source, raw.observed_at)
+
     elif raw.meta.get("model_release") and raw.url:
-        # HF model release: key a pseudo-service per org, one offer per model url.
+        # HF model release: key a pseudo-service per org, one offer per model URL.
         org = (raw.meta.get("org") or "hf").lower()
         pseudo = f"hf/{org}"
-        svc = session.scalar(select(Service).where(Service.canonical_domain == pseudo))
-        if svc is None:
-            svc = Service(canonical_domain=pseudo, name=org, type="model_release", status="active")
-            session.add(svc)
-            session.flush()
-        existing = session.scalar(
-            select(Offer).where(Offer.service_id == svc.id, Offer.url == raw.url)
+        svc_rows = db.execute(
+            "SELECT id FROM services WHERE canonical_domain = ?", [pseudo]
         )
-        if existing is None:
-            offer = Offer(service_id=svc.id, type="model_release", url=raw.url,
-                          claim_steps=raw.meta.get("model_id"))
-            session.add(offer)
-            session.flush()
+        if svc_rows:
+            service_id = svc_rows[0]["id"]
+        else:
+            db.run(
+                "INSERT INTO services (canonical_domain, name, type, status) "
+                "VALUES (?, ?, 'model_release', 'active')",
+                [pseudo, org],
+            )
+            service_id = db.execute("SELECT last_insert_rowid() AS id")[0]["id"]
+
+        existing = db.execute(
+            "SELECT id FROM offers WHERE service_id = ? AND url = ?",
+            [service_id, raw.url],
+        )
+        if not existing:
+            db.run(
+                "INSERT INTO offers (service_id, type, url, claim_steps) "
+                "VALUES (?, 'model_release', ?, ?)",
+                [service_id, raw.url, raw.meta.get("model_id")],
+            )
+            offer_id = db.execute("SELECT last_insert_rowid() AS id")[0]["id"]
             stats["model_releases"] = 1
         else:
-            offer = existing
+            offer_id = existing[0]["id"]
+
     elif raw.meta.get("service_candidate") and domains:
-        # Domain-only lead (e.g. certstream): seed a Service for later enrichment,
-        # no Offer yet.
-        svc = _get_or_create_service(session, domains[0], clf)
+        # Domain-only lead (e.g. certstream): seed a Service for later enrichment.
+        service_id = _get_or_create_service(db, domains[0], clf)
         stats["candidates"] = 1
 
-    sig = Signal(
-        offer_id=offer.id if offer else None,
-        service_id=svc.id if svc else None,
-        source=raw.source,
-        source_url=raw.source_url,
-        url=raw.url,
-        raw_text=(raw.raw_text or "")[:8000],
-        lang=raw.lang,
-        classification=clf.model_dump(),
-        confidence=clf.confidence,
-        observed_at=raw.observed_at,
+    db.run(
+        "INSERT INTO signals "
+        "(offer_id, service_id, source, source_url, url, raw_text, lang, "
+        "classification, confidence, observed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            offer_id,
+            service_id,
+            raw.source,
+            raw.source_url,
+            raw.url,
+            (raw.raw_text or "")[:8000],
+            raw.lang,
+            json_encode(clf.model_dump()),
+            clf.confidence,
+            _dt_str(raw.observed_at),
+        ],
     )
-    session.add(sig)
     stats["signals"] = 1
     return stats

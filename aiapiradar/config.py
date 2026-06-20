@@ -52,9 +52,23 @@ class Settings(BaseSettings):
     tg_chat_id: str = ""
     notify_min_score: float = 0.6
 
+    # ── Platform selection ─────────────────────────────────────────────────
+    # local       → SQLite/Postgres + APScheduler + FastAPI  (VPS / Docker)
+    # cloudflare  → D1 REST API + Cron Workers               (CF free tier)
+    platform: str = "local"
+
+    # Cloudflare D1 credentials (only needed when platform=cloudflare)
+    cf_account_id: str = ""
+    cf_d1_database_id: str = ""
+    cf_api_token: str = ""
+
     @property
     def has_llm(self) -> bool:
         return bool(self.llm_api_key)
+
+    @property
+    def is_cloudflare(self) -> bool:
+        return self.platform.lower() == "cloudflare"
 
 
 @lru_cache

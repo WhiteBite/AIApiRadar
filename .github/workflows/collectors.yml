@@ -1,0 +1,37 @@
+name: Run Collectors
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # every hour
+  workflow_dispatch:        # allow manual trigger
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run collectors once
+        env:
+          AIRADAR_PLATFORM: cloudflare
+          AIRADAR_CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          AIRADAR_CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
+          AIRADAR_CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          AIRADAR_LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          AIRADAR_TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          AIRADAR_TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python -m aiapiradar.cli init-db
+          python -m aiapiradar.cli collect-once
+          python -m aiapiradar.cli score
+          python -m aiapiradar.cli notify --limit 5

@@ -39,6 +39,27 @@ def cmd_run(_: argparse.Namespace) -> None:
     asyncio.run(run_forever())
 
 
+def cmd_collect_once(_: argparse.Namespace) -> None:
+    """Run all collectors once — used by GitHub Actions."""
+    from .pipeline import async_pipeline
+
+    load_builtin()
+    init_db()
+
+    async def run() -> None:
+        registry = get_registry()
+        for name, cls in registry.items():
+            try:
+                collector = cls()
+                signals = list(await collector.collect())
+                await async_pipeline(signals)
+                log.info("collector %s: %d signals", name, len(signals))
+            except Exception:
+                log.exception("collector %s failed", name)
+
+    asyncio.run(run())
+
+
 def cmd_enrich(args: argparse.Namespace) -> None:
     from .watchdog import run_watchdog
 
@@ -79,6 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("init-db", help="create database tables").set_defaults(func=cmd_init_db)
     sub.add_parser("collectors", help="list registered collectors").set_defaults(func=cmd_collectors)
     sub.add_parser("run", help="start the scheduler").set_defaults(func=cmd_run)
+    sub.add_parser("collect-once", help="run all collectors once (for CI/GH Actions)").set_defaults(func=cmd_collect_once)
 
     p_enrich = sub.add_parser("enrich", help="probe/enrich stale services")
     p_enrich.add_argument("--limit", type=int, default=50)
