@@ -159,7 +159,16 @@ def cmd_reclassify(args: argparse.Namespace) -> None:
         for (o, svc), c in zip(work, classifications):
             if not c.is_offer:
                 continue
-            o.amount = c.amount if c.amount is not None else o.amount
+            # Sanity cap: LLM sometimes hallucinates large amounts from page
+            # copy/pricing text. Cap to a sane free-tier ceiling.
+            MAX_USD = 5000.0
+            MAX_CREDITS = 5000.0
+            llm_amount = c.amount
+            if llm_amount is not None:
+                cap = MAX_CREDITS if c.unit == "credits" else MAX_USD
+                if llm_amount > cap:
+                    llm_amount = None
+            o.amount = llm_amount if llm_amount is not None else o.amount
             o.currency = c.currency or o.currency
             o.unit = c.unit or o.unit
             o.effort = c.effort or o.effort
