@@ -14,7 +14,8 @@
     --secondary: 220 13% 15%;
     --secondary-foreground: 220 13% 85%;
     --muted: 220 13% 15%;
-    --muted-foreground: 220 11% 65%;
+    --muted-foreground: 220 11% 68%;
+    /* was 65%, lifted for readability */
     --accent: 220 13% 18%;
     --accent-foreground: 220 14% 96%;
     --destructive: 0 72% 51%;
@@ -35,7 +36,8 @@
 }
 
 html {
-  font-size: 15px;
+  font-size: 16px;
+  /* was 15px — one step up for readability */
 }
 
 body {

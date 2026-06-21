@@ -43,6 +43,8 @@ function offerToDict(offer: Record<string, unknown>, domain: string | null) {
     engine: offer.engine,
     domain_first_seen: offer.domain_first_seen,
     first_seen_at: offer.first_seen_at,
+    source: offer.source ?? null,
+    source_url: offer.source_url ?? null,
   }
 }
 
@@ -53,7 +55,9 @@ app.get('/api/offers', async (c) => {
   let sql = `
     SELECT o.*, s.canonical_domain, s.name as service_name,
            s.status as service_status, s.reliability, s.engine,
-           s.domain_first_seen
+           s.domain_first_seen,
+           (SELECT source FROM signals WHERE offer_id = o.id ORDER BY observed_at ASC LIMIT 1) as source,
+           (SELECT source_url FROM signals WHERE offer_id = o.id ORDER BY observed_at ASC LIMIT 1) as source_url
     FROM offers o
     LEFT JOIN services s ON o.service_id = s.id
     WHERE 1=1

@@ -59,28 +59,28 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
           </span>
         )}
         <span className={cn(
-          "flex-1 min-w-0 truncate text-[14px] font-medium leading-tight",
+          "flex-1 min-w-0 truncate text-[15px] font-medium leading-tight",
           isSelected ? "text-white" : "text-zinc-100"
         )}>
           {domain}
         </span>
         {value && (
-          <span className={cn("text-[14px] font-bold tabular-nums shrink-0", valueColor)}>
+          <span className={cn("text-[15px] font-bold tabular-nums shrink-0", valueColor)}>
             {value}
           </span>
         )}
       </div>
 
       {/* line 2: models + source + age */}
-      <div className="flex items-center gap-1.5 mt-1 text-xs min-w-0 pl-4">
-        <span className="flex-1 min-w-0 truncate text-zinc-500">
+      <div className="flex items-center gap-1.5 mt-1 text-[12px] min-w-0 pl-4">
+        <span className="flex-1 min-w-0 truncate text-zinc-400">
           {offer.models.length > 0 ? (
             offer.models.slice(0, 4).join(" · ") + (offer.models.length > 4 ? ` +${offer.models.length - 4}` : "")
           ) : (
-            <span className="text-zinc-700">—</span>
+            <span className="text-zinc-600">—</span>
           )}
         </span>
-        <span className="shrink-0 flex items-center gap-1.5 text-zinc-600">
+        <span className="shrink-0 flex items-center gap-1.5 text-zinc-500">
           {src && <span>{src}</span>}
           {src && <span className="text-zinc-700">·</span>}
           <span className="tabular-nums">{offer.first_seen_at ? timeAgo(offer.first_seen_at) : ""}</span>
