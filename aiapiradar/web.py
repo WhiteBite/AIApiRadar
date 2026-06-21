@@ -38,6 +38,8 @@ def offer_to_dict(offer: Offer, service: Optional[Service]) -> dict:
         "claim_steps": offer.claim_steps,
         "requirements": offer.requirements,
         "referral_required": offer.referral_required,
+        "effort": offer.effort,
+        "unit": offer.unit,
         "url": offer.url,
         "score": round(offer.score or 0.0, 4),
         "status": service.status if service else offer.status,
@@ -52,6 +54,7 @@ def query_offers(
     session,
     *,
     type: Optional[str] = None,
+    effort: Optional[str] = None,
     min_amount: Optional[float] = None,
     model: Optional[str] = None,
     status: Optional[str] = None,
@@ -62,6 +65,8 @@ def query_offers(
     stmt = select(Offer, Service).join(Service, Offer.service_id == Service.id)
     if type:
         stmt = stmt.where(Offer.type == type)
+    if effort:
+        stmt = stmt.where(Offer.effort == effort)
     if min_amount is not None:
         stmt = stmt.where(Offer.amount >= min_amount)
     if status:
@@ -88,12 +93,18 @@ def compute_stats(session) -> dict:
     active = session.scalar(select(func.count(Service.id)).where(Service.status == "active")) or 0
     dead = session.scalar(select(func.count(Service.id)).where(Service.status == "dead")) or 0
     by_type = dict(session.execute(select(Offer.type, func.count(Offer.id)).group_by(Offer.type)).all())
+    by_effort = dict(session.execute(
+        select(Offer.effort, func.count(Offer.id))
+        .where(Offer.effort.isnot(None))
+        .group_by(Offer.effort)
+    ).all())
     return {
         "services": services,
         "offers": offers,
         "active": active,
         "dead": dead,
         "by_type": by_type,
+        "by_effort": by_effort,
     }
 
 
@@ -113,6 +124,7 @@ def create_app() -> FastAPI:
     @app.get("/api/offers")
     def api_offers(
         type: Optional[str] = None,
+        effort: Optional[str] = None,
         min_amount: Optional[float] = None,
         model: Optional[str] = None,
         status: Optional[str] = None,
@@ -121,7 +133,7 @@ def create_app() -> FastAPI:
         offset: int = 0,
     ):
         with session_scope() as s:
-            items = query_offers(s, type=type, min_amount=min_amount, model=model,
+            items = query_offers(s, type=type, effort=effort, min_amount=min_amount, model=model,
                                  status=status, q=q, limit=limit, offset=offset)
         return {"count": len(items), "items": items}
 

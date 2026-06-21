@@ -44,6 +44,8 @@ class Classification(BaseModel):
     claim_steps: Optional[str] = None
     requirements: Optional[str] = None
     referral_required: bool = False
+    effort: Optional[str] = None   # "easy" / "medium" / "hard"
+    unit: Optional[str] = None     # "usd" / "credits" / "days" / "months"
     confidence: float = 0.0
 
     @classmethod
@@ -77,6 +79,44 @@ def _guess_type(text: str, domains: list[str], lang: str) -> str:
     return "saas_trial"
 
 
+_HARD_KEYWORDS = [
+    "карта", "card", "b1n", "bin", "namso", "namso-gen", "генератор карт",
+    "виртуальн", "vpn", "vps", "впн", "отменить", "cancel subscription",
+    "пробный период", "refund", "fake card", "фейк", "chargeback",
+]
+_MEDIUM_KEYWORDS = [
+    "ref=", "invite=", "реф-ссылк", "реферальн", "referral",
+    "звезд", "github star", "star on github", "репозитор",
+    "промокод", "promo code", "coupon", "business email", "бизнес почт",
+    ".edu", "edu email",
+]
+
+
+def _detect_effort(text: str, referral_required: bool) -> str:
+    low = text.lower()
+    if any(k in low for k in _HARD_KEYWORDS):
+        return "hard"
+    if referral_required or any(k in low for k in _MEDIUM_KEYWORDS):
+        return "medium"
+    return "easy"
+
+
+def _detect_unit(text: str, amount: Optional[float], currency: Optional[str]) -> Optional[str]:
+    """Detect what unit the amount represents."""
+    if not amount:
+        return None
+    if currency == "USD":
+        return "usd"
+    low = text.lower()
+    if re.search(r'\d+\s*(?:кредит|credit|балл|баллов|points?|cr\b)', low):
+        return "credits"
+    if re.search(r'\d+\s*(?:дн|day|суток)', low):
+        return "days"
+    if re.search(r'\d+\s*(?:месяц|month|мес\b)', low):
+        return "months"
+    return "usd" if currency else "credits"
+
+
 class HeuristicClassifier:
     name = "heuristic"
 
@@ -93,6 +133,8 @@ class HeuristicClassifier:
         if models:
             confidence += 0.15
         name = domains[0].split(".")[0] if domains else None
+        effort = _detect_effort(text, referral)
+        unit = _detect_unit(text, amount, currency)
         return Classification(
             is_offer=True,
             service_name=name,
@@ -101,6 +143,8 @@ class HeuristicClassifier:
             currency=currency,
             models=models,
             referral_required=referral,
+            effort=effort,
+            unit=unit,
             confidence=min(confidence, 0.95),
         )
 
@@ -112,7 +156,11 @@ _LLM_SYSTEM = (
     f"{list(OFFER_TYPES)}, "
     '"amount": number|null, "currency": str|null, "models": [str], '
     '"claim_steps": str|null, "requirements": str|null, '
-    '"referral_required": bool, "confidence": number 0..1}. '
+    '"referral_required": bool, '
+    '"effort": "easy"|"medium"|"hard", "unit": "usd"|"credits"|"days"|"months"|null, '
+    '"confidence": number 0..1}. '
+    "Rules for effort: easy=just signup with email; medium=need referral/promo code/GitHub star/business email; "
+    "hard=requires fake card/VPN/subscription cancellation/automation. "
     "If the message is not about obtaining free/credited AI access, set is_offer=false."
 )
 
@@ -155,6 +203,11 @@ class LLMClassifier:
             data = json.loads(resp.choices[0].message.content)
             if data.get("offer_type") not in OFFER_TYPES:
                 data["offer_type"] = "other"
+            # Validate effort / unit — accept only known values, else None
+            if data.get("effort") not in ("easy", "medium", "hard"):
+                data["effort"] = None
+            if data.get("unit") not in ("usd", "credits", "days", "months"):
+                data["unit"] = None
             return Classification(**data)
         except Exception:
             log.exception("LLM classify failed; using heuristic fallback")

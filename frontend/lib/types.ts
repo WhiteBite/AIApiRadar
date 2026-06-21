@@ -12,6 +12,18 @@ export type OfferType =
 
 export type ServiceStatus = "new" | "active" | "dead" | "unknown";
 
+/** How much effort is required to claim the offer. */
+export type EffortTier = "easy" | "medium" | "hard";
+
+/**
+ * Unit of the amount field.
+ * usd     → "$200"
+ * credits → "5 000cr"
+ * days    → "7d trial"
+ * months  → "3 months"
+ */
+export type AmountUnit = "usd" | "credits" | "days" | "months";
+
 export interface Offer {
   id: number;
   service_id: number;
@@ -20,6 +32,8 @@ export interface Offer {
   type: OfferType;
   amount: number | null;
   currency: string | null;
+  unit: AmountUnit | null;      // NEW — how to interpret amount
+  effort: EffortTier | null;    // NEW — easy / medium / hard to claim
   models: string[];
   claim_steps: string | null;
   requirements: string | null;
@@ -63,30 +77,57 @@ export interface Stats {
   active: number;
   dead: number;
   by_type: Partial<Record<OfferType, number>>;
+  by_effort?: Partial<Record<EffortTier, number>>;
 }
 
 // ─── UI helpers ─────────────────────────────────────────────────────────────
 
-export type FeedTab = "all" | "credits" | "promos" | "models" | "dead";
+export type FeedTab = "all" | "easy" | "medium" | "hard" | "dead";
 
 export interface OffersFilters {
   tab: FeedTab;
   q: string;
   minAmount: number | "";
   model: string;
-  activeOnly: boolean;
-  noRefOnly: boolean;
   sort: "score" | "amount" | "newest";
 }
 
 // Map tab → API params
-export const TAB_FILTERS: Record<
-  FeedTab,
-  { type?: string; status?: string }
-> = {
+export const TAB_FILTERS: Record<FeedTab, { effort?: string; status?: string }> = {
   all: {},
-  credits: { type: "relay" },      // combined in page component
-  promos: { type: "saas_promo" },
-  models: { type: "model_release" },
+  easy: { effort: "easy" },
+  medium: { effort: "medium" },
+  hard: { effort: "hard" },
   dead: { status: "dead" },
+};
+
+// ─── Display helpers ─────────────────────────────────────────────────────────
+
+/** Format amount+unit into a human-readable string. */
+export function fmtValue(
+  amount: number | null,
+  unit: AmountUnit | null,
+  currency: string | null
+): string {
+  if (!amount) return "";
+  if (unit === "credits") return `${amount.toLocaleString()}cr`;
+  if (unit === "days") return `${amount}d trial`;
+  if (unit === "months") return `${amount}mo`;
+  // usd or fallback
+  const sym = currency === "USD" || !currency ? "$" : `${currency} `;
+  return `${sym}${amount % 1 === 0 ? amount : amount.toFixed(0)}`;
+}
+
+/** Effort tier → human label */
+export const EFFORT_LABELS: Record<EffortTier, string> = {
+  easy: "Easy",
+  medium: "Medium",
+  hard: "Hard",
+};
+
+/** Effort tier → emoji indicator */
+export const EFFORT_EMOJI: Record<EffortTier, string> = {
+  easy: "🟢",
+  medium: "🟡",
+  hard: "🔴",
 };

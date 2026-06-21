@@ -75,6 +75,8 @@ class Offer(Base):
     claim_steps: Mapped[Optional[str]] = mapped_column(Text)
     requirements: Mapped[Optional[str]] = mapped_column(Text)
     referral_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    effort: Mapped[Optional[str]] = mapped_column(String(16))
+    unit: Mapped[Optional[str]] = mapped_column(String(16))
     url: Mapped[Optional[str]] = mapped_column(String(1024))
     status: Mapped[str] = mapped_column(String(16), default="new")
     score: Mapped[float] = mapped_column(Float, default=0.0)

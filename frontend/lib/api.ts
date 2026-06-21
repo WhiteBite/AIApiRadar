@@ -30,6 +30,7 @@ async function get<T>(path: string, params?: Record<string, string | number | bo
 
 export interface FetchOffersParams {
   type?: string;
+  effort?: string;
   min_amount?: number | "";
   model?: string;
   status?: string;

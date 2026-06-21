@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS offers (
     claim_steps       TEXT,
     requirements      TEXT,
     referral_required INTEGER NOT NULL DEFAULT 0,
+    effort            TEXT,           -- easy / medium / hard
+    unit              TEXT,           -- usd / credits / days / months
     url               TEXT,
     status            TEXT    NOT NULL DEFAULT 'new',
     score             REAL    NOT NULL DEFAULT 0.0,

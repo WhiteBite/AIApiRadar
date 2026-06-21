@@ -88,7 +88,7 @@ def _get_or_create_offer(
     url: Optional[str],
 ) -> tuple[int, bool]:
     rows = db.execute(
-        "SELECT id, amount, currency, models, claim_steps, requirements, url "
+        "SELECT id, amount, currency, models, claim_steps, requirements, url, effort, unit "
         "FROM offers WHERE service_id = ? AND type = ?",
         [service_id, clf.offer_type],
     )
@@ -119,11 +119,17 @@ def _get_or_create_offer(
                 offer_id,
             ],
         )
+        # Backfill effort/unit if still NULL
+        if clf.effort or clf.unit:
+            db.run(
+                "UPDATE offers SET effort=?, unit=? WHERE id=? AND (effort IS NULL OR unit IS NULL)",
+                [clf.effort, clf.unit, offer_id],
+            )
         return offer_id, False
     db.run(
         "INSERT INTO offers (service_id, type, amount, currency, models, "
-        "claim_steps, requirements, referral_required, url) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "claim_steps, requirements, referral_required, url, effort, unit) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             service_id,
             clf.offer_type,
@@ -134,6 +140,8 @@ def _get_or_create_offer(
             clf.requirements,
             int(clf.referral_required),
             url,
+            clf.effort,
+            clf.unit,
         ],
     )
     offer_id = db.execute("SELECT last_insert_rowid() AS id")[0]["id"]
