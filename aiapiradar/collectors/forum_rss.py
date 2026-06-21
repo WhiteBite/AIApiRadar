@@ -1,8 +1,9 @@
-"""Forum RSS collector — nodeseek / linux.do / v2ex.
+"""Forum RSS collector — nodeseek / linux.do / v2ex / RSSHub-powered feeds.
 
 These Chinese/dev forums are the epicentre for API-relay (中转站) launches.
-All expose RSS, readable without login. We parse entries into Signals; the
-pre-filter + classifier decide which are actual offers.
+All expose RSS (directly or via RSSHub), readable without login. We parse
+entries into Signals; the pre-filter + classifier decide which are actual
+offers.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from typing import Iterable
 import feedparser
 import httpx
 
+from ..config import get_settings
 from ..core.collector import Collector
 from ..core.signal import Signal
 from ..logging_conf import get_logger
@@ -20,16 +22,52 @@ from . import register
 
 log = get_logger("forum_rss")
 
+
+def _rsshub(path: str) -> str:
+    """Build a RSSHub URL using configured instance or public fallback."""
+    base = get_settings().rsshub_url.rstrip("/")
+    return f"{base}{path}"
+
+
 # Per-feed source name -> RSS URL. Tune endpoints in config later.
 FEEDS = {
-    "nodeseek": "https://rss.nodeseek.com/",
-    "linuxdo": "https://linux.do/latest.rss",
-    "linuxdo_top": "https://linux.do/top.rss",
-    "v2ex": "https://www.v2ex.com/feed/tab/all.xml",
-    "hostloc": "https://hostloc.com/forum.php?mod=rss",
+    # ── Chinese/dev forums — API-relay (中转站) launches ──────────────────
+    "nodeseek":   "https://rss.nodeseek.com/",
+    "linuxdo":    "https://linux.do/latest.rss",
+    "linuxdo_top":"https://linux.do/top.rss",
+    "v2ex":       "https://www.v2ex.com/feed/tab/all.xml",
+    "hostloc":    "https://hostloc.com/forum.php?mod=rss",
+
+    # ── Launch aggregators — new tools from unknown sources ───────────────
+    # Key insight: we don't need to know band.ai or getmerlin.in in advance.
+    # When they launch/submit to these platforms, we catch them here.
+    "betalist":   "https://betalist.com/feed.xml",
+    "hackernews_ai": "https://hnrss.org/newest?q=AI+API+free+trial&points=10",
+    "hackernews_show": "https://hnrss.org/show",       # Show HN: new products
+
+    # ── RSSHub-powered Chinese social platforms ───────────────────────────
+    # Public instance: https://rsshub.app (rate-limited; use AIRADAR_RSSHUB_URL
+    # to point at a self-hosted instance). Feeds are best-effort — failures are
+    # logged at DEBUG to avoid noise when the public instance is slow.
+    "bilibili_search_api":   _rsshub("/bilibili/search/免费API/0/default"),
+    "bilibili_search_relay": _rsshub("/bilibili/search/中转站/0/default"),
+    "zhihu_topic_api":       _rsshub("/zhihu/topic/19551298"),  # topic: AI
+    "csdn_search":           _rsshub("/csdn/search/免费API"),
+    "juejin_tag_ai":         _rsshub("/juejin/tag/AI"),
+    "weibo_search":          _rsshub("/weibo/search/topics/免费API"),
 }
 
 _TAG_RE = re.compile(r"<[^>]+>")
+
+# Sources that come from RSSHub — log failures at DEBUG, not WARNING
+_RSSHUB_SOURCES = frozenset({
+    "bilibili_search_api",
+    "bilibili_search_relay",
+    "zhihu_topic_api",
+    "csdn_search",
+    "juejin_tag_ai",
+    "weibo_search",
+})
 
 
 def _clean(text: str) -> str:
@@ -76,6 +114,9 @@ class ForumRssCollector(Collector):
                     resp.raise_for_status()
                     out.extend(parse_feed(resp.content, source))
                 except Exception:
-                    log.warning("forum feed failed: %s", source, exc_info=False)
+                    if source in _RSSHUB_SOURCES:
+                        log.debug("rsshub feed failed: %s", source, exc_info=False)
+                    else:
+                        log.warning("forum feed failed: %s", source, exc_info=False)
         log.info("forum_rss collected %d entries", len(out))
         return out

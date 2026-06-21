@@ -39,48 +39,23 @@ def cmd_run(_: argparse.Namespace) -> None:
     asyncio.run(run_forever())
 
 
-def cmd_collect_once(_: argparse.Namespace) -> None:
-    """Run all collectors once — used by GitHub Actions / Cloudflare cron.
+def cmd_collect_once(args: argparse.Namespace) -> None:
+    """Run one full batch pass — used by GitHub Actions / Cloudflare cron.
 
-    Collectors run CONCURRENTLY (network I/O is the bottleneck) with a per-
-    collector timeout so one slow source (e.g. crt.sh) can't stall the run.
-    Their signals are then pipelined sequentially (DB writes stay serial).
+    Delegates to the batch runner: every enabled poll collector runs once
+    (stream collectors like certstream/telegram are skipped — they need the
+    long-running scheduler), then maintenance (enrich/watchdog, discovery,
+    notify) runs once. One pass, no APScheduler.
 
-    Skips realtime stream/ingest collectors (certstream WebSocket, telegram
-    Telethon) which are meant for the long-running scheduler. CT-log coverage
-    in one-shot mode is provided by the `crtsh` HTTP-poll collector instead.
+    `--limit` caps how many collectors run this pass (a simple subrequest
+    budget for serverless); omit it to run them all.
     """
-    from .pipeline import async_pipeline
+    from .sched.batch_runner import run_batch
 
-    skip = {"certstream", "telegram"}
-    per_collector_timeout = 120.0
-    load_builtin()
     init_db()
-
-    async def run() -> None:
-        registry = get_registry()
-        names = [n for n in registry if n not in skip]
-
-        async def _collect(name: str):
-            try:
-                collector = registry[name]()
-                signals = list(await asyncio.wait_for(
-                    collector.collect(), timeout=per_collector_timeout))
-                log.info("collector %s: %d signals", name, len(signals))
-                return signals
-            except asyncio.TimeoutError:
-                log.warning("collector %s timed out (%.0fs)", name, per_collector_timeout)
-                return []
-            except Exception:
-                log.exception("collector %s failed", name)
-                return []
-
-        results = await asyncio.gather(*[_collect(n) for n in names])
-        all_signals = [s for batch in results for s in batch]
-        await async_pipeline(all_signals)
-        log.info("collect-once: %d signals from %d collectors", len(all_signals), len(names))
-
-    asyncio.run(run())
+    budget = getattr(args, "limit", None)
+    stats = asyncio.run(run_batch(budget=budget))
+    log.info("collect-once (batch): %s", stats)
 
 
 def cmd_enrich(args: argparse.Namespace) -> None:
@@ -92,13 +67,28 @@ def cmd_enrich(args: argparse.Namespace) -> None:
     log.info("enriched %d services", n)
 
 
+def cmd_discover(args: argparse.Namespace) -> None:
+    """Probe harvested domain candidates and promote real AI services.
+
+    Discovers services we've never heard of: every domain mentioned in any
+    collected signal is harvested into domain_candidates by the pipeline; this
+    command probes the pending ones and promotes qualifying offers into the
+    feed.
+    """
+    from .discover import run_discovery
+
+    init_db()
+    stats = asyncio.run(run_discovery(limit=args.limit, max_attempts=args.max_attempts))
+    log.info("discover: %s", stats)
+
+
 def cmd_score(_: argparse.Namespace) -> None:
-    from .db import session_scope
+    from .db import get_db
     from .scorer import rescore_all
 
     init_db()
-    with session_scope() as session:
-        n = rescore_all(session)
+    with get_db() as db:
+        n = rescore_all(db)
     log.info("rescored %d offers", n)
 
 
@@ -125,8 +115,8 @@ def cmd_reclassify(args: argparse.Namespace) -> None:
     offers per request to fit tight free-tier daily quotas (e.g. Gemini
     free-tier ~20 requests/day → ~5 batched calls covers all offers).
     """
-    from .db import session_scope
-    from .models import Offer, Service, Signal
+    from .db import get_db
+    from .db.base import json_encode, json_decode
     from .pipeline import normalize
     from .pipeline.classify import get_classifier
     from .scorer import rescore_all
@@ -135,51 +125,80 @@ def cmd_reclassify(args: argparse.Namespace) -> None:
     clf = get_classifier()
     log.info("reclassify using %s (batch_size=%d)", clf.__class__.__name__, args.batch_size)
 
+    MAX_USD = 5000.0
+    MAX_CREDITS = 5000.0
     updated = 0
-    with session_scope() as s:
-        offers = s.query(Offer).all()
-        work, items = [], []
-        for o in offers:
-            svc = s.get(Service, o.service_id)
-            if not svc:
-                continue
-            sigs = s.query(Signal).filter(Signal.service_id == svc.id).all()
-            texts = [x.raw_text for x in sigs if x.raw_text]
+
+    with get_db() as db:
+        # Load offers + services in one join
+        rows = db.execute("""
+            SELECT o.id, o.service_id, o.type, o.amount, o.currency, o.unit,
+                   o.effort, o.models, o.claim_steps, o.requirements, o.referral_required,
+                   s.canonical_domain
+            FROM offers o
+            JOIN services s ON o.service_id = s.id
+        """)
+
+        # Load all signals, keyed by service_id
+        sig_rows = db.execute("SELECT service_id, raw_text, lang FROM signals WHERE raw_text IS NOT NULL")
+        sigs_by_svc: dict = {}
+        for sr in sig_rows:
+            sid = sr["service_id"]
+            if sid:
+                sigs_by_svc.setdefault(sid, []).append(sr)
+
+        # Build classify inputs for offers that have signal text
+        work = []   # (offer_row_dict,)
+        items = []  # (text, url, lang, domains)
+        for o in rows:
+            sigs = sigs_by_svc.get(o["service_id"], [])
+            texts = [s["raw_text"] for s in sigs if s["raw_text"]]
             if not texts:
                 continue
             text = max(texts, key=len)
             lang = normalize.detect_lang(text)
-            url = o.url or f"https://{svc.canonical_domain}"
-            work.append((o, svc))
-            items.append((text, url, lang, [svc.canonical_domain]))
+            url = f"https://{o['canonical_domain']}"
+            work.append(o)
+            items.append((text, url, lang, [o["canonical_domain"]]))
 
         log.info("classifying %d offers", len(items))
         classifications = clf.classify_batch(items, batch_size=args.batch_size)
 
-        for (o, svc), c in zip(work, classifications):
+        for o, c in zip(work, classifications):
             if not c.is_offer:
                 continue
-            # Sanity cap: LLM sometimes hallucinates large amounts from page
-            # copy/pricing text. Cap to a sane free-tier ceiling.
-            MAX_USD = 5000.0
-            MAX_CREDITS = 5000.0
             llm_amount = c.amount
             if llm_amount is not None:
                 cap = MAX_CREDITS if c.unit == "credits" else MAX_USD
                 if llm_amount > cap:
                     llm_amount = None
-            o.amount = llm_amount if llm_amount is not None else o.amount
-            o.currency = c.currency or o.currency
-            o.unit = c.unit or o.unit
-            o.effort = c.effort or o.effort
-            o.type = c.offer_type or o.type
-            o.claim_steps = c.claim_steps or o.claim_steps
-            o.requirements = c.requirements or o.requirements
+
+            # Build UPDATE: only overwrite if LLM gave a non-None value
+            fields, params = [], []
+            if llm_amount is not None:
+                fields.append("amount=?"); params.append(llm_amount)
+            if c.currency:
+                fields.append("currency=?"); params.append(c.currency)
+            if c.unit:
+                fields.append("unit=?"); params.append(c.unit)
+            if c.effort:
+                fields.append("effort=?"); params.append(c.effort)
+            if c.offer_type:
+                fields.append("type=?"); params.append(c.offer_type)
+            if c.claim_steps:
+                fields.append("claim_steps=?"); params.append(c.claim_steps)
+            if c.requirements:
+                fields.append("requirements=?"); params.append(c.requirements)
             if c.models:
-                o.models = c.models
-            o.referral_required = bool(c.referral_required)
-            updated += 1
-        n = rescore_all(s)
+                fields.append("models=?"); params.append(json_encode(c.models))
+            fields.append("referral_required=?"); params.append(int(c.referral_required))
+            if fields:
+                params.append(o["id"])
+                db.run(f"UPDATE offers SET {', '.join(fields)} WHERE id=?", params)
+                updated += 1
+
+        n = rescore_all(db)
+
     log.info("reclassified %d offers, rescored %d", updated, n)
 
 
@@ -219,6 +238,61 @@ def cmd_purge_blocked(_: argparse.Namespace) -> None:
         "purge-blocked: removed %d services, %d offers, %d signals",
         purged_services, purged_offers, purged_signals,
     )
+
+
+def cmd_lead_report(args: argparse.Namespace) -> None:
+    """Print a lead-time scoreboard: how many hours ahead of TG aggregators we are."""
+    from .db import get_db
+
+    init_db()
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT lm.lead_hours, lm.offer_id, lm.first_seen_by_us, "
+            "lm.first_seen_in_aggregator, "
+            "s.canonical_domain "
+            "FROM lead_metrics lm "
+            "JOIN offers o ON lm.offer_id = o.id "
+            "JOIN services s ON o.service_id = s.id "
+            "WHERE lm.lead_hours IS NOT NULL "
+            "ORDER BY lm.lead_hours DESC"
+        )
+
+    if not rows:
+        print("No lead-time data yet. Run the pipeline with Telegram ingest enabled.")
+        return
+
+    hours = [r["lead_hours"] for r in rows]
+    ahead  = [h for h in hours if h > 0]
+    behind = [h for h in hours if h < 0]
+    tied   = [h for h in hours if h == 0]
+
+    avg = round(sum(hours) / len(hours), 1) if hours else 0
+    s_h = sorted(hours)
+    mid = len(s_h) // 2
+    median = round((s_h[mid-1]+s_h[mid])/2 if len(s_h)%2==0 else s_h[mid], 1)
+
+    print(f"\n{'='*55}")
+    print(f"  Lead-time scoreboard  ({len(rows)} offers tracked)")
+    print(f"{'='*55}")
+    print(f"  Ahead of aggregators : {len(ahead):>4}  ({100*len(ahead)//len(rows)}%)")
+    print(f"  Behind aggregators   : {len(behind):>4}  ({100*len(behind)//len(rows)}%)")
+    print(f"  Tied                 : {len(tied):>4}")
+    print(f"  Average lead         : {avg:>+.1f} h")
+    print(f"  Median lead          : {median:>+.1f} h")
+    if ahead:
+        best = max(ahead)
+        best_domain = next((r["canonical_domain"] for r in rows if r["lead_hours"]==best), "?")
+        print(f"  Best lead            : {best:>+.1f} h  ({best_domain})")
+    print()
+
+    # Top-10 by lead time
+    top = sorted(rows, key=lambda r: r["lead_hours"], reverse=True)[:10]
+    print(f"  {'Domain':<35} {'Lead (h)':>9}  First seen by us")
+    print(f"  {'-'*35} {'-'*9}  {'-'*20}")
+    for r in top:
+        first_us = (r["first_seen_by_us"] or "")[:16]
+        print(f"  {r['canonical_domain']:<35} {r['lead_hours']:>+9.1f}  {first_us}")
+    print()
 
 
 def cmd_dump_sql(args: argparse.Namespace) -> None:
@@ -264,7 +338,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("init-db", help="create database tables").set_defaults(func=cmd_init_db)
     sub.add_parser("collectors", help="list registered collectors").set_defaults(func=cmd_collectors)
     sub.add_parser("run", help="start the scheduler").set_defaults(func=cmd_run)
-    sub.add_parser("collect-once", help="run all collectors once (for CI/GH Actions)").set_defaults(func=cmd_collect_once)
+    p_collect = sub.add_parser("collect-once", help="run one batch pass: all enabled poll collectors + maintenance (for CI/cron)")
+    p_collect.add_argument("--limit", type=int, default=None,
+                           help="cap how many collectors run this pass (subrequest budget); default: all")
+    p_collect.set_defaults(func=cmd_collect_once)
 
     p_enrich = sub.add_parser("enrich", help="probe/enrich stale services")
     p_enrich.add_argument("--limit", type=int, default=50)
@@ -273,12 +350,27 @@ def build_parser() -> argparse.ArgumentParser:
                           help="skip slow crt.sh domain-age lookups (fast page-only enrich)")
     p_enrich.set_defaults(func=cmd_enrich)
 
+    p_discover = sub.add_parser(
+        "discover",
+        help="probe harvested domain candidates, promote new AI services",
+    )
+    p_discover.add_argument("--limit", type=int, default=40,
+                            help="max candidates to probe per run")
+    p_discover.add_argument("--max-attempts", type=int, default=3,
+                            help="give up on a candidate after this many failed probes")
+    p_discover.set_defaults(func=cmd_discover)
+
     sub.add_parser("score", help="recompute offer scores").set_defaults(func=cmd_score)
 
     sub.add_parser(
         "purge-blocked",
         help="delete stored services on blocklisted domains (clean polluted data)",
     ).set_defaults(func=cmd_purge_blocked)
+
+    sub.add_parser(
+        "lead-report",
+        help="print lead-time scoreboard (how many hours ahead of TG aggregators)",
+    ).set_defaults(func=cmd_lead_report)
 
     p_serve = sub.add_parser("serve", help="run the web dashboard + API")
     p_serve.add_argument("--host", default="127.0.0.1")

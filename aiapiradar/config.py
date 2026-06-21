@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     # Get a free Bearer Token at developer.twitter.com → Free tier is enough.
     tw_bearer_token: str = ""
 
+    # FOFA (optional; enables favicon-hash relay discovery in FofaCollector)
+    # Get credentials at https://fofa.info → free tier has tiny quotas.
+    fofa_key: str = ""
+    fofa_email: str = ""
+
     # Scoring weights
     score_w_freshness: float = 0.4
     score_w_amount: float = 0.3
@@ -69,6 +74,22 @@ class Settings(BaseSettings):
     cf_account_id: str = ""
     cf_d1_database_id: str = ""
     cf_api_token: str = ""
+
+    # RSSHub instance for Chinese social platform feeds (Bilibili, Zhihu, etc.)
+    # Use a self-hosted instance to avoid rate-limits on the public one.
+    rsshub_url: str = "https://rsshub.app"
+
+    # ── Runner / execution ─────────────────────────────────────────────────
+    # Selects HOW the application runs collectors + maintenance:
+    #   process → long-lived APScheduler loop (VDS / Docker).
+    #   batch   → single one-shot pass, no scheduler (serverless / CI cron).
+    #   auto    → pick by `platform` (local→process, cloudflare→batch).
+    runner: str = "auto"            # auto | process | batch  (auto → by platform)
+    enable_discovery: bool = True   # gate the discovery worker on/off
+    enable_streaming: bool = True   # ignored on non-VDS runners (batch never streams)
+    discovery_limit: int = 40       # max domain candidates probed per discovery run
+    probe_timeout: float = 15.0     # per-probe HTTP timeout (seconds)
+    max_subrequests: int = 0        # 0 = unlimited (VDS); >0 caps outbound (serverless)
 
     @property
     def has_llm(self) -> bool:

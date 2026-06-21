@@ -18,14 +18,35 @@ from . import register
 log = get_logger("searchdorks")
 
 DORKS = [
-    '"free credits" "sign up" (claude OR gpt OR gemini) -site:reddit.com',
-    'inurl:redeem OR inurl:promo "$" api credits',
+    # ── Broad discovery: catches ANY new site, not just known ones ─────────
+    # When BandAI publishes "promo code BANDHACK26" on band.ai,
+    # this query returns it within hours — no prior knowledge of band.ai needed.
+    '"promo code" AI API free -site:reddit.com -site:twitter.com -site:youtube.com',
+    '"free trial" LLM API -site:reddit.com -site:openai.com -site:anthropic.com',
+    '"free credits" AI API "sign up" -site:reddit.com',
+    '"no credit card" AI API free tier launch',
+
+    # Fresh .ai / .io domains with promo offers (catches new startups)
+    '(site:*.ai OR site:*.io) "promo code" "free" API',
+    '(site:*.ai OR site:*.io) "free tier" OR "free trial" API launch',
+
+    # Hackathon promos: "BANDHACK26"-style codes always contain HACK/FEST/DEV
+    # and appear on hackathon platform sponsor pages before TG channels pick them up
+    '(site:lablab.ai OR site:devpost.com OR site:hackathon.io) "free" "API" promo',
+
+    # AppSumo / deal aggregators: established services run limited-time promos here
+    'site:appsumo.com AI API "free" OR "lifetime" -"sold out"',
+    'site:saasworthy.com "free trial" AI API new',
+
+    # Russian broad discovery (not site-specific)
+    '"промокод" AI API бесплатно -reddit -telegram',
+    'бесплатный триал API AI сервис регистрация',
+
+    # Chinese relay / free API discovery (site-specific — high signal)
     'site:nodeseek.com 注册送 额度',
     'site:linux.do 公益站 免费 API',
     'site:v2ex.com 中转站 注册送',
-    '"no credit card" free api credits register',
     '白嫖 claude code api 注册送',
-    'API ключи триальный баланс регистрация бесплатно',
 ]
 
 ENDPOINT = "https://www.googleapis.com/customsearch/v1"

@@ -120,4 +120,38 @@ export const apiKeys = {
   models: () => ["models"] as const,
   sources: () => ["sources"] as const,
   analytics: () => ["analytics"] as const,
+  collectors: () => ["collectors"] as const,
+  keyStatus: () => ["key-status"] as const,
 };
+
+export interface CollectorItem {
+  name: string;
+  label: string;
+  dot: string;
+  kind: string;
+  mode: "poll" | "stream";
+  interval: number;
+  enabled: boolean;
+  requires: string | null;
+  key_present: boolean | null;
+}
+
+export interface KeyStatus {
+  key: string;
+  present: boolean;
+  unlocks: string[];
+}
+
+export async function fetchCollectors(): Promise<CollectorItem[]> {
+  return get<CollectorItem[]>('/api/collectors');
+}
+
+export async function patchCollector(
+  name: string, body: { enabled?: boolean; interval?: number }
+): Promise<{ ok: boolean }> {
+  return mutate<{ ok: boolean }>(`/api/collectors/${name}`, 'PATCH', body);
+}
+
+export async function fetchKeyStatus(): Promise<KeyStatus[]> {
+  return get<KeyStatus[]>('/api/keys');
+}

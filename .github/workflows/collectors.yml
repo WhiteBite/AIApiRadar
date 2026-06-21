@@ -43,11 +43,12 @@ jobs:
           npx --yes wrangler@4 d1 export aiapiradar --remote --output=dump.sql
           python -c "import sqlite3, os; os.path.exists('aiapiradar.db') and os.remove('aiapiradar.db'); sqlite3.connect('aiapiradar.db').executescript(open('dump.sql', encoding='utf-8').read())"
 
-      - name: Collect → enrich → score
+      - name: Collect → enrich → discover → score
         run: |
           python -m aiapiradar.cli init-db
           python -m aiapiradar.cli collect-once
           python -m aiapiradar.cli purge-blocked
+          python -m aiapiradar.cli discover --limit 40
           python -m aiapiradar.cli enrich --limit 80 --no-crtsh --stale-hours 6
           python -m aiapiradar.cli score
 

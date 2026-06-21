@@ -38,6 +38,60 @@ HALF_LIFE_HOURS = 60.0
 # new mediocre offer still outranks a stale jackpot.
 QUALITY_FLOOR = 0.35
 
+# ─── Language-cascade early signal (§8.6) ─────────────────────────────────────
+# Relays propagate offers along a language cascade: zh (T+0) → ru (T+1-3d) →
+# en (T+3-7d). An offer that shows up in Chinese/Russian chatter but has NOT
+# yet surfaced in any English source is EARLY — boosting it puts us ahead of
+# the English ecosystem. The boost is additive, conservative, and clamped so
+# the total score never exceeds 1.0. It layers on top of the existing
+# recency × quality × cross-source score without changing any weight semantics.
+EARLY_SIGNAL_BOOST = 0.1
+
+# Fallback collector → language map, used when a signal's `lang` column is
+# empty. Only collectors with an unambiguous audience language are listed;
+# language-neutral collectors (certstream, crtsh, github, huggingface, …) are
+# intentionally absent so they neither trigger nor suppress the early boost.
+_SOURCE_LANG = {
+    # Chinese-language relays / forums / socials
+    "forum_rss": "zh",
+    "nodeseek": "zh",
+    "linux.do": "zh",
+    "bilibili": "zh",
+    "csdn": "zh",
+    "weibo": "zh",
+    # Russian-language channels
+    "telegram": "ru",
+    "twitter-ru": "ru",
+    # English-language sources
+    "reddit": "en",
+    "hackernews": "en",
+    "producthunt": "en",
+}
+
+
+def _norm_lang(value: Optional[str]) -> Optional[str]:
+    """Normalize a stored lang code to one of zh/ru/en (or None if other)."""
+    if not value:
+        return None
+    v = str(value).strip().lower()
+    if v.startswith("zh"):
+        return "zh"
+    if v.startswith("ru"):
+        return "ru"
+    if v.startswith("en"):
+        return "en"
+    return None
+
+
+def _signal_lang(source: Optional[str], lang: Optional[str]) -> Optional[str]:
+    """Best-effort language for one signal: explicit `lang` wins, else source."""
+    return _norm_lang(lang) or _SOURCE_LANG.get((source or "").strip().lower())
+
+
+def _is_early_signal(langs: set) -> bool:
+    """True when an offer has zh and/or ru signals but no en signal yet."""
+    return ("en" not in langs) and bool(langs & {"zh", "ru"})
+
 
 # ─── Pure math helpers ────────────────────────────────────────────────────────
 
@@ -128,13 +182,25 @@ def _rescore_all_db(db: Database, settings: Optional[Settings] = None) -> int:
 
     rows = db.execute(
         """
-        SELECT o.id, o.type, o.amount, o.referral_required,
+        SELECT o.id, o.service_id, o.type, o.amount, o.referral_required,
                o.first_seen_at, COALESCE(s.reliability, 0.0) AS reliability,
                (SELECT COUNT(DISTINCT source) FROM signals WHERE service_id = o.service_id) AS source_count
         FROM offers o
         LEFT JOIN services s ON o.service_id = s.id
         """
     )
+
+    # Batched per-service language set: one scan of `signals` instead of a
+    # per-offer subquery. Signals attach to an offer via its service_id (same
+    # association the cross-source source_count uses), so we key by service_id.
+    lang_by_service: dict = {}
+    for sig in db.execute("SELECT service_id, source, lang FROM signals"):
+        sid = sig.get("service_id")
+        if sid is None:
+            continue
+        lang = _signal_lang(sig.get("source"), sig.get("lang"))
+        if lang:
+            lang_by_service.setdefault(sid, set()).add(lang)
 
     for row in rows:
         first = _dt_parse(row["first_seen_at"]) or now
@@ -150,6 +216,13 @@ def _rescore_all_db(db: Database, settings: Optional[Settings] = None) -> int:
         boost = 1.0 + 0.15 * min(max(0, source_count - 1), 3)
         # cap at 1.0 so score never exceeds 1
         score = min(round(_compose(age_hours, quality) * boost, 4), 1.0)
+
+        # Language-cascade early-signal boost: zh/ru seen but no en yet.
+        # Additive on top of the composed+cross-source score, clamped to 1.0.
+        langs = lang_by_service.get(row.get("service_id"), set())
+        if _is_early_signal(langs):
+            score = min(round(score + EARLY_SIGNAL_BOOST, 4), 1.0)
+
         db.run("UPDATE offers SET score = ? WHERE id = ?", [score, row["id"]])
 
     log.info("rescored %d offers (db path)", len(rows))

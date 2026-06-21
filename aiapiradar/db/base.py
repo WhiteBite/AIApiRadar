@@ -108,6 +108,27 @@ CREATE TABLE IF NOT EXISTS lead_metrics (
     first_seen_in_aggregator TEXT,
     lead_hours               REAL
 );
+
+CREATE TABLE IF NOT EXISTS domain_candidates (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain        TEXT    NOT NULL UNIQUE,   -- registrable domain (eTLD+1)
+    first_source  TEXT,                       -- collector that first mentioned it
+    first_seen    TEXT    NOT NULL DEFAULT (datetime('now')),
+    probed_at     TEXT,
+    status        TEXT    NOT NULL DEFAULT 'pending',  -- pending/promoted/rejected/known
+    probe_result  TEXT,                       -- JSON summary of the probe
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    priority      TEXT    NOT NULL DEFAULT 'normal'  -- normal / high (offer trigger nearby)
+);
+
+CREATE INDEX IF NOT EXISTS idx_domain_candidates_status_attempts
+    ON domain_candidates (status, attempts, first_seen);
+
+CREATE INDEX IF NOT EXISTS idx_domain_candidates_domain
+    ON domain_candidates (domain);
+
+CREATE INDEX IF NOT EXISTS idx_signals_source_source_url
+    ON signals (source, source_url);
 """
 
 
@@ -163,11 +184,24 @@ def get_db() -> Iterator[Database]:
 
 
 def init_db() -> None:
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist, and apply incremental migrations."""
     factory = _get_factory()
     with factory() as db:
         for stmt in SCHEMA_SQL.strip().split(";"):
             stmt = stmt.strip()
             if stmt:
                 db.run(stmt)
+        # ── Incremental migrations ────────────────────────────────────────────
+        # SQLite has no IF NOT EXISTS for ALTER TABLE, so we use try/except.
+        # Each migration is idempotent: re-running init_db() on an up-to-date
+        # schema silently passes (duplicate-column error is swallowed).
+        #
+        # Migration 1: add priority column to domain_candidates (added in v0.2).
+        try:
+            db.run(
+                "ALTER TABLE domain_candidates "
+                "ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'"
+            )
+        except Exception:
+            pass  # column already exists — safe to ignore
         db.commit()

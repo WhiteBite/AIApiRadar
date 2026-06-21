@@ -21,9 +21,24 @@ log = get_logger("directories")
 
 # Listing pages most likely to surface fresh free-tier tools.
 PAGES = {
+    # ── AI tool directories (filter = free/trial) ─────────────────────────
     "theresanaiforthat": "https://theresanaiforthat.com/just-launched/",
-    "futurepedia": "https://www.futurepedia.io/ai-tools?pricing=free_trial",
-    "toolify": "https://www.toolify.ai/new",
+    "futurepedia":       "https://www.futurepedia.io/ai-tools?pricing=free_trial",
+    "toolify":           "https://www.toolify.ai/new",
+
+    # ── Launch aggregators — list ALL new tools, not just AI ──────────────
+    # We get raw outbound links; the classifier filters for AI/API relevance.
+    # These cover services we've NEVER heard of: that's the point.
+    "futurelist":  "https://futurelist.co/",
+    "uneed":       "https://www.uneed.app/",
+    "betalist":    "https://betalist.com/",
+    "peerlist":    "https://peerlist.io/tools",
+    "launched":    "https://launched.io/",
+
+    # ── Hackathon platforms — sponsor "free access" promos appear here ────
+    # BANDHACK26-style codes are published as sponsor perks for hackathon teams
+    "lablab_hackathons": "https://lablab.ai/event",
+    "devpost":           "https://devpost.com/hackathons",
 }
 
 _SELF_HOSTS = {

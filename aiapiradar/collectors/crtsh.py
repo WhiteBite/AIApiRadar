@@ -15,7 +15,11 @@ from ..core.collector import Collector
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
-from .certstream import domain_matches  # reuse existing keyword filter
+from .certstream import (  # reuse existing keyword filter + TLD harvest config
+    ALWAYS_HARVEST_TLDS,
+    _has_always_harvest_tld,
+    domain_matches,
+)
 
 log = get_logger("crtsh")
 
@@ -31,6 +35,12 @@ SEARCH_PATTERNS = [
     "%chatapi%",
 ]
 
+# TLD-harvest patterns — crt.sh supports wildcard TLD queries (e.g. q=%.ai).
+# These mirror certstream's TLD-harvest path: every new domain on these TLDs is
+# a discovery candidate, even without an AI keyword in the name. Derived from
+# certstream.ALWAYS_HARVEST_TLDS so the list is never duplicated.
+HARVEST_PATTERNS = ["%" + tld for tld in ALWAYS_HARVEST_TLDS]
+
 CRTSH_URL = "https://crt.sh/"
 
 
@@ -43,13 +53,15 @@ class CrtshCollector(Collector):
     def __init__(self, timeout: float = 12.0):
         self.timeout = timeout
 
-    async def collect(self) -> Iterable[Signal]:
+    async def collect(self, max_per_pattern: int = 500) -> Iterable[Signal]:
         out: list[Signal] = []
         seen: set[str] = set()
+        harvest_count = 0
         async with httpx.AsyncClient(
             timeout=self.timeout,
             headers={"User-Agent": "AiApiRadar/0.1"},
         ) as client:
+            # Path 1: keyword patterns → force_classify (classify immediately).
             for pattern in SEARCH_PATTERNS:
                 try:
                     r = await client.get(CRTSH_URL, params={
@@ -59,7 +71,10 @@ class CrtshCollector(Collector):
                     })
                     if r.status_code != 200:
                         continue
+                    rows = 0
                     for entry in r.json() or []:
+                        if rows >= max_per_pattern:
+                            break
                         for name_val in (entry.get("name_value") or "").split("\n"):
                             dom = name_val.strip().lstrip("*.")
                             if dom and dom not in seen and domain_matches(dom):
@@ -71,7 +86,56 @@ class CrtshCollector(Collector):
                                     source_url=f"https://crt.sh/?q={dom}",
                                     meta={"service_candidate": True, "force_classify": True},
                                 ))
+                        rows += 1
                 except Exception:
                     log.warning("crtsh pattern %s failed", pattern, exc_info=False)
-        log.info("crtsh found %d candidate domains", len(out))
+
+            # Path 2: TLD-harvest patterns → service_candidate only (no force_classify).
+            # crt.sh wildcard TLD queries (e.g. %.ai) can return a LOT of rows and
+            # can be slow, so each pattern is capped and isolated in try/except.
+            for pattern in HARVEST_PATTERNS:
+                try:
+                    r = await client.get(CRTSH_URL, params={
+                        "q": pattern,
+                        "output": "json",
+                        "exclude": "expired",
+                    })
+                    if r.status_code != 200:
+                        continue
+                    rows = 0
+                    for entry in r.json() or []:
+                        if rows >= max_per_pattern:
+                            break
+                        for name_val in (entry.get("name_value") or "").split("\n"):
+                            dom = name_val.strip().lstrip("*.")
+                            if not dom or dom in seen:
+                                continue
+                            if domain_matches(dom):
+                                # Keyword match: strong signal, classify immediately.
+                                seen.add(dom)
+                                out.append(Signal(
+                                    source=self.name,
+                                    raw_text=dom,
+                                    url=f"https://{dom}",
+                                    source_url=f"https://crt.sh/?q={dom}",
+                                    meta={"service_candidate": True, "force_classify": True},
+                                ))
+                            elif _has_always_harvest_tld(dom):
+                                # TLD-only harvest: brandable name, probe worker decides.
+                                seen.add(dom)
+                                out.append(Signal(
+                                    source=self.name,
+                                    raw_text=dom,
+                                    url=f"https://{dom}",
+                                    source_url=f"https://crt.sh/?q={dom}",
+                                    meta={"service_candidate": True},
+                                ))
+                                harvest_count += 1
+                        rows += 1
+                except Exception:
+                    log.warning("crtsh pattern %s failed", pattern, exc_info=False)
+        log.info(
+            "crtsh found %d candidate domains (%d TLD-harvest)",
+            len(out), harvest_count,
+        )
         return out

@@ -40,11 +40,26 @@ def build_scheduler(pipeline: PipelineFn | None = None) -> AsyncIOScheduler:
     pipeline = pipeline or _default_pipeline
     load_builtin()
     scheduler = AsyncIOScheduler()
+
+    # Config layer: only schedule collectors enabled in the `sources` table,
+    # and honour any per-collector interval override stored there.
+    from ..config import get_settings
+    from .source_config import enabled_collectors, resolve_interval, sync_sources
+
+    settings = get_settings()
     registry = get_registry()
+    sync_sources(registry)  # ensure every collector has a sources row
+    registry = enabled_collectors(registry)
+
     if not registry:
-        log.warning("no collectors registered yet")
+        log.warning("no enabled collectors registered")
     for name, cls in registry.items():
-        interval = getattr(cls, "interval", 900)
+        # Stream collectors (persistent websockets) only make sense on the VDS
+        # process runner; skip them entirely when streaming is disabled.
+        if getattr(cls, "mode", "poll") == "stream" and not settings.enable_streaming:
+            log.info("skipping stream collector %s (streaming disabled)", name)
+            continue
+        interval = resolve_interval(name, cls)
         scheduler.add_job(
             run_collector_once,
             "interval",
@@ -64,6 +79,22 @@ def build_scheduler(pipeline: PipelineFn | None = None) -> AsyncIOScheduler:
     scheduler.add_job(_watchdog_job, "interval", hours=6, id="watchdog",
                       max_instances=1, coalesce=True)
     log.info("scheduled watchdog every 6h")
+
+    # Discovery: probe domains harvested from signals and promote real services.
+    # Runs often (new candidates accumulate on every collector pass) but each
+    # run is bounded by `limit`, so the probe load stays predictable. Gated by
+    # settings.enable_discovery so operators can turn the worker off entirely.
+    if settings.enable_discovery:
+        async def _discover_job() -> None:
+            from ..discover import run_discovery
+            await run_discovery(limit=settings.discovery_limit,
+                                timeout=settings.probe_timeout)
+
+        scheduler.add_job(_discover_job, "interval", minutes=20, id="discover",
+                          max_instances=1, coalesce=True)
+        log.info("scheduled discovery every 20m")
+    else:
+        log.info("discovery disabled (enable_discovery=False)")
 
     async def _notify_job() -> None:
         from ..notifier import notify_new_offers

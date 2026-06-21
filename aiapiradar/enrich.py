@@ -39,13 +39,40 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _WS_RE = re.compile(r"\s+")
 
-# Model keyword -> canonical label (for facts parsed off the service page).
-_MODEL_MAP = {
+# Model keywords → canonical label (for facts parsed off the service page).
+#
+# Split into two groups to avoid false positives:
+#
+#   _SUBSTR_TOKENS  — longer, distinctive strings safe for plain substring
+#                     matching (e.g. "claude", "gemini", "deepseek").
+#
+#   _EXACT_TOKENS   — short / ambiguous tokens that must NOT match inside
+#                     unrelated words.  For these we require that the token
+#                     is NOT immediately preceded or followed by a letter,
+#                     e.g.  "gpt"  matches "gpt-4" and "use gpt today" but
+#                     NOT "egypt" or "agpt".  A pre-compiled regex is built
+#                     for each token in _EXACT_TOKENS below.
+_SUBSTR_TOKENS: dict[str, str] = {
     "claude": "claude", "opus": "opus", "sonnet": "sonnet", "haiku": "haiku",
-    "gpt-5": "gpt", "gpt-4": "gpt", "gpt4": "gpt", "gpt ": "gpt", "openai": "gpt",
-    "o1": "gpt", "o3": "gpt", "gemini": "gemini", "deepseek": "deepseek",
-    "grok": "grok", "llama": "llama", "qwen": "qwen", "glm": "glm",
+    "gpt-5": "gpt", "gpt-4": "gpt", "gpt4": "gpt", "openai": "gpt",
+    "gemini": "gemini", "deepseek": "deepseek",
+    "grok": "grok", "llama": "llama", "qwen": "qwen",
     "mistral": "mistral", "kimi": "kimi",
+}
+
+# Short tokens that require a non-letter boundary on both sides.
+_EXACT_TOKENS: dict[str, str] = {
+    "gpt": "gpt",   # would match "egypt", "agpt" etc. without boundary check
+    "o1":  "gpt",   # very short; matches "o1" in scientific/version strings
+    "o3":  "gpt",   # same
+    "glm": "glm",   # would match inside longer words
+}
+
+# Pre-compile one regex per exact token: (?<![a-z])TOKEN(?![a-z])
+# Applied to the already-lowercased text blob.
+_EXACT_RES: dict[str, tuple[re.Pattern, str]] = {
+    token: (re.compile(r"(?<![a-z])" + re.escape(token) + r"(?![a-z])"), label)
+    for token, label in _EXACT_TOKENS.items()
 }
 _AMOUNT_USD_RE = re.compile(r"\$\s?(\d{1,3}(?:[,\s]?\d{3})*(?:\.\d+)?)")
 _AMOUNT_CREDIT_RE = re.compile(r"(\d{2,6})\s*(?:credits?|刀|额度|points?|баллов)", re.IGNORECASE)
@@ -71,6 +98,13 @@ PRICING_TRIGGERS = (
     "注册送", "免费", "trial", "credits", "送额度",
 )
 
+# Standard endpoints exposed by relay engines (new-api / one-api / sub2api).
+# These reveal an offer even when /pricing is empty or missing — closing the
+# "offer only on homepage / no pricing page" blind spot. All are anonymous GETs.
+RELAY_STATUS_PATH = "/api/status"   # JSON {data:{version,...}} — relay fingerprint
+RELAY_MODELS_PATH = "/v1/models"    # OpenAI-format model list — offer signal
+RELAY_NOTICE_PATH = "/api/notice"   # operator notice, often "注册即送 $X"
+
 
 @dataclass(slots=True)
 class ProbeResult:
@@ -83,6 +117,8 @@ class ProbeResult:
     description: Optional[str] = None      # short blurb for the UI
     models: list[str] = field(default_factory=list)  # models detected on page
     amount: Optional[float] = None         # credit/$ amount detected on page
+    is_relay: bool = False                 # answered a relay-engine endpoint
+    notice: Optional[str] = None           # text from /api/notice (offer copy)
 
 
 def _meta_description(html: str) -> Optional[str]:
@@ -115,10 +151,22 @@ def _make_description(html: str) -> Optional[str]:
 
 
 def detect_models(text: str) -> list[str]:
+    """Return canonical model labels found in *text*.
+
+    Uses two matching strategies:
+    - Substring match for long, distinctive tokens (claude, gemini, deepseek …)
+    - Word-boundary regex for short/ambiguous tokens (gpt, o1, o3, glm) to
+      avoid false positives like "egypt" → gpt or "o1" inside a version string.
+    """
     blob = (text or "").lower()
     out: list[str] = []
-    for kw, label in _MODEL_MAP.items():
+    # Substring pass — long tokens, safe without boundaries.
+    for kw, label in _SUBSTR_TOKENS.items():
         if kw in blob and label not in out:
+            out.append(label)
+    # Boundary pass — short tokens, require non-letter on both sides.
+    for _token, (rx, label) in _EXACT_RES.items():
+        if label not in out and rx.search(blob):
             out.append(label)
     return out
 
@@ -199,6 +247,62 @@ def reliability_score(alive: bool, has_pricing: bool, engine_known: bool,
     return round(min(s, 1.0), 3)
 
 
+async def _probe_relay_endpoints(domain: str, client: httpx.AsyncClient,
+                                 res: ProbeResult) -> str:
+    """Probe standard relay-engine endpoints. Returns extra text for fact parsing.
+
+    Relay panels (new-api/one-api/sub2api) expose an offer even when /pricing is
+    empty: /v1/models lists the models on tap, /api/notice carries the operator's
+    "注册送 $X" copy, /api/status confirms it's a relay. All anonymous GETs.
+    """
+    extra = ""
+
+    # /api/status — relay fingerprint (JSON with a version field).
+    try:
+        r = await client.get(f"https://{domain}{RELAY_STATUS_PATH}")
+        ctype = r.headers.get("content-type", "")
+        if r.status_code == 200 and "json" in ctype:
+            data = r.json()
+            if isinstance(data, dict) and ("data" in data or "version" in data):
+                res.is_relay = True
+    except Exception:
+        pass
+
+    # /v1/models — OpenAI-format model list. Presence == it's an LLM API.
+    try:
+        r = await client.get(f"https://{domain}{RELAY_MODELS_PATH}")
+        if r.status_code == 200 and "json" in r.headers.get("content-type", ""):
+            data = r.json()
+            items = data.get("data") if isinstance(data, dict) else None
+            ids = [m.get("id", "") for m in items if isinstance(m, dict)] if items else []
+            if ids:
+                res.is_relay = True
+                extra += " " + " ".join(ids)[:2000]
+                for m in detect_models(" ".join(ids)):
+                    if m not in res.models:
+                        res.models.append(m)
+    except Exception:
+        pass
+
+    # /api/notice — operator notice, often the actual free-credit promo text.
+    try:
+        r = await client.get(f"https://{domain}{RELAY_NOTICE_PATH}")
+        if r.status_code == 200:
+            txt = _visible_text(r.text, cap=2000)
+            if txt:
+                low = txt.lower()
+                if any(t in low for t in PRICING_TRIGGERS):
+                    res.pricing_triggers = True
+                    res.notice = txt[:300]
+                extra += " " + txt
+    except Exception:
+        pass
+
+    if res.is_relay and not res.engine:
+        res.engine = "relay"  # generic: confirmed relay, specific engine unknown
+    return extra
+
+
 async def probe(domain: str, client: httpx.AsyncClient) -> ProbeResult:
     res = ProbeResult()
     blob = ""
@@ -224,9 +328,15 @@ async def probe(domain: str, client: httpx.AsyncClient) -> ProbeResult:
                 res.description = _make_description(r.text)
     except Exception:
         pass
-    # Facts parsed off the page text (title + body + pricing).
-    fact_blob = f"{res.title or ''} {res.description or ''} {blob}"
-    res.models = detect_models(fact_blob)
+    # Relay-endpoint probe: skip only when /pricing already gave a rich offer
+    # (has pricing triggers AND a known relay engine). Otherwise try the
+    # endpoints — this is where silent relays and empty-/pricing sites reveal
+    # themselves. Keeps requests off clearly-commercial sites with full pricing.
+    if not (res.has_pricing and res.pricing_triggers and res.engine):
+        blob += await _probe_relay_endpoints(domain, client, res)
+    # Facts parsed off the page text (title + body + pricing + relay endpoints).
+    fact_blob = f"{res.title or ''} {res.description or ''} {res.notice or ''} {blob}"
+    res.models = detect_models(fact_blob) or res.models
     res.amount = detect_amount(fact_blob)
     return res
 

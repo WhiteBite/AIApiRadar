@@ -31,6 +31,15 @@ REPOS = [
     ("ghlist_freeaitools", "ShaikhWarsi/free-ai-tools"),
 ]
 
+# Search queries used to self-expand the repo set at runtime (§4.4). These
+# surface freshly-updated awesome/relay list repos beyond the hardcoded seeds.
+SEARCH_QUERIES = [
+    "awesome free llm api",
+    "free-llm-api-resources",
+    "免费 api 中转",
+    "awesome ai api",
+]
+
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
 _SKIP_HOSTS = {
     "github.com", "raw.githubusercontent.com", "githubusercontent.com",
@@ -88,10 +97,47 @@ class GitHubListsCollector(Collector):
             h["Authorization"] = f"Bearer {token}"
         return h
 
+    async def _discover_repos(self, client: httpx.AsyncClient) -> list[tuple[str, str]]:
+        """Search GitHub for fresh awesome/relay list repos to harvest this run.
+
+        Returns (source_key, "owner/repo") tuples. Failures degrade to []. The
+        whole thing is guarded so a search outage never blocks the seed harvest.
+        """
+        found: dict[str, str] = {}
+        for q in SEARCH_QUERIES:
+            try:
+                r = await client.get(
+                    "https://api.github.com/search/repositories",
+                    params={"q": q, "sort": "updated", "order": "desc", "per_page": 10},
+                )
+                if r.status_code != 200:
+                    log.warning("repo search %r -> %s", q, r.status_code)
+                    continue
+                for item in r.json().get("items", []):
+                    full = item.get("full_name")
+                    if not full or "/" not in full:
+                        continue
+                    key = "ghlist_" + full.lower().replace("/", "_").replace("-", "_")
+                    found.setdefault(full, key)
+            except Exception:
+                log.warning("github_lists repo search failed: %r", q, exc_info=False)
+        return [(key, full) for full, key in found.items()]
+
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
         async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers()) as client:
-            for source, repo in self.repos:
+            # Self-expanding repo set: union hardcoded seeds with live search
+            # discoveries for THIS run, deduped by "owner/repo".
+            repos: list[tuple[str, str]] = list(self.repos)
+            seen_repos = {repo for _, repo in repos}
+            try:
+                for source, repo in await self._discover_repos(client):
+                    if repo not in seen_repos:
+                        seen_repos.add(repo)
+                        repos.append((source, repo))
+            except Exception:
+                log.warning("github_lists discovery failed; using seeds only", exc_info=False)
+            for source, repo in repos:
                 try:
                     r = await client.get(f"https://api.github.com/repos/{repo}/readme")
                     if r.status_code != 200:

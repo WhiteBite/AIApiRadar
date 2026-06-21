@@ -7,6 +7,15 @@ proved this on freemodel.dev (cert 13 days before the chat post).
 Design: a shared background websocket thread buffers matching domains; the
 scheduler drains the buffer every `interval` seconds via collect(). State is
 class-level because the scheduler instantiates a fresh collector per run.
+
+Two harvest paths:
+  1. Keyword buffer (_buffer): domain contains an AI/relay keyword → Signal
+     with force_classify=True so the pipeline classifies it immediately.
+  2. TLD harvest buffer (_harvest_buffer): domain has an always-harvest TLD
+     (.ai/.io/.app/.dev) but no keyword match → Signal with service_candidate=True
+     but WITHOUT force_classify. The probe worker (discover.py) decides if it's
+     a real AI service. This catches brandable names like "zenmux.ai" that have
+     no AI keywords in the hostname.
 """
 from __future__ import annotations
 
@@ -33,12 +42,24 @@ DOMAIN_KEYWORDS = (
 # Obvious false positives to drop.
 _DENY = ("apigee", "gateway.fb", "googleapis", "api.telegram")
 
+# TLDs where ~90% of new domains ARE AI/tech products.
+# Every new domain on these TLDs goes straight into the discovery queue so the
+# probe worker can assess it, regardless of whether its name contains a keyword.
+ALWAYS_HARVEST_TLDS = (".ai", ".io", ".app", ".dev")
+
 
 def domain_matches(domain: str) -> bool:
+    """Return True if the domain name contains an AI/relay keyword."""
     d = domain.lower().lstrip("*.")
     if any(bad in d for bad in _DENY):
         return False
     return any(k in d for k in DOMAIN_KEYWORDS)
+
+
+def _has_always_harvest_tld(domain: str) -> bool:
+    """Return True if the registrable domain ends with one of ALWAYS_HARVEST_TLDS."""
+    d = domain.lower().lstrip("*.")
+    return any(d.endswith(tld) for tld in ALWAYS_HARVEST_TLDS)
 
 
 @register
@@ -46,10 +67,15 @@ class CertStreamCollector(Collector):
     name = "certstream"
     kind = "ct-stream"
     interval = 60
+    # Long-lived websocket thread + class-level in-memory buffers must persist
+    # between collect() calls, so this collector can only run on a VDS.
+    mode = "stream"
     URL = "wss://certstream.calidog.io/"
 
     # shared across instances (scheduler builds a new instance per run)
     _buffer: "deque[str]" = deque(maxlen=10000)
+    # Separate buffer for TLD-based harvest (no keyword required).
+    _harvest_buffer: "deque[str]" = deque(maxlen=50000)
     _seen: set[str] = set()
     _thread: threading.Thread | None = None
     _lock = threading.Lock()
@@ -65,9 +91,17 @@ class CertStreamCollector(Collector):
         domains = (data.get("data", {}).get("leaf_cert", {}) or {}).get("all_domains", []) or []
         with cls._lock:
             for dom in domains:
-                if domain_matches(dom) and dom not in cls._seen:
-                    cls._seen.add(dom)
-                    cls._buffer.append(dom.lstrip("*."))
+                clean = dom.lstrip("*.")
+                if clean in cls._seen:
+                    continue
+                if domain_matches(dom):
+                    # Keyword match: strong signal, classify immediately.
+                    cls._seen.add(clean)
+                    cls._buffer.append(clean)
+                elif _has_always_harvest_tld(dom):
+                    # TLD-only harvest: brandable name, probe worker decides.
+                    cls._seen.add(clean)
+                    cls._harvest_buffer.append(clean)
 
     @classmethod
     def _run_ws(cls) -> None:  # pragma: no cover - network loop
@@ -96,7 +130,9 @@ class CertStreamCollector(Collector):
     async def collect(self) -> Iterable[Signal]:
         self.ensure_started()
         out: list[Signal] = []
+
         with self._lock:
+            # Path 1: keyword-matched domains → classify immediately.
             while self._buffer:
                 dom = self._buffer.popleft()
                 out.append(Signal(
@@ -106,6 +142,24 @@ class CertStreamCollector(Collector):
                     source_url=f"certstream://{dom}",
                     meta={"service_candidate": True, "force_classify": True},
                 ))
+
+            # Path 2: TLD-harvest domains → probe worker decides, no classify.
+            harvest_count = 0
+            while self._harvest_buffer:
+                dom = self._harvest_buffer.popleft()
+                out.append(Signal(
+                    source=self.name,
+                    raw_text=dom,
+                    url=f"https://{dom}",
+                    source_url=f"certstream://{dom}",
+                    meta={"service_candidate": True},
+                ))
+                harvest_count += 1
+
         if out:
-            log.info("certstream drained %d candidate domains", len(out))
+            keyword_count = len(out) - harvest_count
+            log.info(
+                "certstream drained %d keyword + %d TLD-harvest candidate domains",
+                keyword_count, harvest_count,
+            )
         return out

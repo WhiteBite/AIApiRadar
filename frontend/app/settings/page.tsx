@@ -4,23 +4,24 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Radio } from "lucide-react";
 
-import { fetchSources, createSource, updateSource, deleteSource, apiKeys } from "@/lib/api";
+import {
+  fetchSources, createSource, updateSource, deleteSource,
+  fetchCollectors, patchCollector, fetchKeyStatus,
+  apiKeys,
+} from "@/lib/api";
+import type { CollectorItem } from "@/lib/api";
 import type { SourceItem } from "@/lib/types";
 import { Header } from "@/components/layout/header";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-const BUILTIN = [
-  { key: "certstream", label: "CertStream (CT-логи)", dot: "bg-cyan-400" },
-  { key: "forum_rss", label: "Форумы (nodeseek / linux.do / v2ex)", dot: "bg-orange-400" },
-  { key: "crtsh", label: "crt.sh (новые домены)", dot: "bg-cyan-400" },
-  { key: "github", label: "GitHub", dot: "bg-zinc-400" },
-  { key: "huggingface", label: "HuggingFace (релизы моделей)", dot: "bg-yellow-400" },
-  { key: "producthunt", label: "Product Hunt", dot: "bg-red-400" },
-  { key: "directories", label: "AI-каталоги", dot: "bg-lime-400" },
-  { key: "coupon", label: "Купоны / аффилиаты", dot: "bg-purple-400" },
-  { key: "youtube", label: "YouTube", dot: "bg-red-400" },
-];
+const DOT: Record<string, string> = {
+  cyan: "bg-cyan-400", orange: "bg-orange-400", red: "bg-red-400",
+  yellow: "bg-yellow-400", lime: "bg-lime-400", purple: "bg-purple-400",
+  sky: "bg-sky-400", zinc: "bg-zinc-400", blue: "bg-blue-400",
+  violet: "bg-violet-400",
+};
+const dotClass = (d: string) => DOT[d] ?? "bg-zinc-400";
 
 export default function SettingsPage() {
   const qc = useQueryClient();
@@ -54,6 +55,23 @@ export default function SettingsPage() {
   const delMut = useMutation({
     mutationFn: (id: number) => deleteSource(id),
     onSuccess: invalidate,
+  });
+
+  // Collectors
+  const { data: collectors = [], isLoading } = useQuery({
+    queryKey: apiKeys.collectors(),
+    queryFn: fetchCollectors,
+  });
+
+  const toggleCollector = useMutation({
+    mutationFn: (c: CollectorItem) => patchCollector(c.name, { enabled: !c.enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: apiKeys.collectors() }),
+  });
+
+  // API keys
+  const { data: keys = [] } = useQuery({
+    queryKey: apiKeys.keyStatus(),
+    queryFn: fetchKeyStatus,
   });
 
   return (
@@ -109,8 +127,8 @@ export default function SettingsPage() {
                   <button
                     onClick={() => toggleMut.mutate(s)}
                     className={`text-xs px-2 py-1 rounded-md border transition-colors ${s.enabled
-                        ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
-                        : "border-zinc-700 text-zinc-500"
+                      ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
+                      : "border-zinc-700 text-zinc-500"
                       }`}
                   >
                     {s.enabled ? "вкл" : "выкл"}
@@ -127,22 +145,58 @@ export default function SettingsPage() {
           )}
         </section>
 
-        {/* ── Built-in collectors ── */}
+        {/* ── Collectors ── */}
         <section>
-          <h2 className="text-sm font-semibold text-zinc-200 mb-4">⚙️ Встроенные коллекторы</h2>
+          <h2 className="text-sm font-semibold text-zinc-200 mb-4">⚙️ Коллекторы</h2>
+          {isLoading ? (
+            <p className="text-sm text-zinc-600">Загрузка...</p>
+          ) : (
+            <div className="border border-zinc-800 rounded-lg divide-y divide-zinc-800">
+              {collectors.map((c) => (
+                <div key={c.name} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${dotClass(c.dot)}`} />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-zinc-300">{c.label}</span>
+                    {c.mode === "stream" && (
+                      <span className="ml-2 text-[10px] text-zinc-600 border border-zinc-700 px-1 rounded">VDS</span>
+                    )}
+                  </div>
+                  {c.requires && c.key_present === false && (
+                    <span className="text-[10px] text-amber-500/80 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                      нужен ключ
+                    </span>
+                  )}
+                  <button
+                    onClick={() => toggleCollector.mutate(c)}
+                    className={`text-xs px-2 py-1 rounded-md border transition-colors ${c.enabled
+                        ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
+                        : "border-zinc-700 text-zinc-500"
+                      }`}
+                  >
+                    {c.enabled ? "вкл" : "выкл"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* ── API Keys ── */}
+        <section>
+          <h2 className="text-sm font-semibold text-zinc-200 mb-4">🔑 Ключи API</h2>
           <div className="border border-zinc-800 rounded-lg divide-y divide-zinc-800">
-            {BUILTIN.map((c) => (
-              <div key={c.key} className="flex items-center gap-3 px-4 py-2.5">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${c.dot}`} />
-                <span className="flex-1 text-sm text-zinc-300">{c.label}</span>
-                <span className="text-xs text-emerald-400">активен</span>
+            {keys.map((k) => (
+              <div key={k.key} className="flex items-center gap-3 px-4 py-2.5">
+                <code className="text-xs text-zinc-400 font-mono flex-1 truncate">{k.key}</code>
+                <span className={`text-xs ${k.present ? "text-emerald-400" : "text-red-400"}`}>
+                  {k.present ? "✓" : "✗"}
+                </span>
+                <span className="text-xs text-zinc-500 truncate max-w-[200px]">
+                  {k.unlocks.join(", ")}
+                </span>
               </div>
             ))}
           </div>
-          <p className="text-xs text-zinc-600 mt-2">
-            Коллекторы запускаются по расписанию командой{" "}
-            <code className="bg-zinc-800 px-1 rounded">aiapiradar run</code>.
-          </p>
         </section>
 
         {/* ── Telegram notifications ── */}

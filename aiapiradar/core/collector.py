@@ -19,6 +19,13 @@ class Collector(abc.ABC):
     kind: str = "generic"
     #: default polling interval in seconds (realtime collectors may ignore)
     interval: int = 900
+    #: execution mode — controls WHERE a cross-platform runner may run this collector.
+    #:   "poll"   = stateless: one self-contained collect() per call. Safe to run
+    #:              ANYWHERE (long-lived VDS process, Cloudflare cron, GitHub Actions).
+    #:   "stream" = needs a long-lived process (persistent websocket / in-memory
+    #:              buffers that survive between collect() calls). VDS-ONLY.
+    #: Defaults to "poll"; streaming collectors override this.
+    mode: str = "poll"
 
     @abc.abstractmethod
     async def collect(self) -> Iterable[Signal]:

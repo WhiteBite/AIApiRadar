@@ -6,9 +6,14 @@ Endpoints
   GET /api/offers           filtered, score-sorted offers (JSON)
   GET /api/services/{id}    service + offers + recent signals (JSON)
   GET /api/stats            aggregate counts (JSON)
+
+Data access uses the platform-agnostic Database protocol (raw SQL + `?`
+placeholders), so the same code serves both SQLite (VDS) and Cloudflare D1 —
+no SQLAlchemy ORM here.
 """
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 from typing import Optional
 
@@ -17,13 +22,97 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import func, select
 
-from .db import session_scope
-from .models import Offer, Service, Signal
+from .db import get_db
+from .db.base import Database, json_decode
 from . import sources as sources_mod
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+# Human-readable metadata for the settings UI.
+# key = collector name, maps to label + color dot + required env var (if any).
+_COLLECTOR_META: dict[str, dict] = {
+    "certstream":   {"label": "CertStream (CT-логи)",          "dot": "cyan",   "requires": None},
+    "crtsh":        {"label": "crt.sh (новые домены)",          "dot": "cyan",   "requires": None},
+    "forum_rss":    {"label": "Форумы (nodeseek / linux.do / v2ex / RSSHub)", "dot": "orange", "requires": None},
+    "hackernews":   {"label": "Hacker News",                    "dot": "orange", "requires": None},
+    "reddit":       {"label": "Reddit",                         "dot": "orange", "requires": None},
+    "github":       {"label": "GitHub",                         "dot": "zinc",   "requires": "AIRADAR_GITHUB_TOKEN"},
+    "github_lists": {"label": "GitHub awesome-lists",           "dot": "zinc",   "requires": "AIRADAR_GITHUB_TOKEN"},
+    "huggingface":  {"label": "HuggingFace (релизы моделей)",   "dot": "yellow", "requires": None},
+    "producthunt":  {"label": "Product Hunt",                   "dot": "red",    "requires": None},
+    "directories":  {"label": "AI-каталоги (BetaList/Uneed…)",  "dot": "lime",   "requires": None},
+    "coupon":       {"label": "Агрегаторы сделок (AppSumo…)",   "dot": "purple", "requires": None},
+    "youtube":      {"label": "YouTube",                        "dot": "red",    "requires": "AIRADAR_YOUTUBE_API_KEY"},
+    "searchdorks":  {"label": "Search dorks (Google CSE)",      "dot": "blue",   "requires": "AIRADAR_SEARCH_API_KEY"},
+    "twitter":      {"label": "Twitter / X",                    "dot": "sky",    "requires": "AIRADAR_TW_BEARER_TOKEN"},
+    "telegram":     {"label": "Telegram ingest",                "dot": "sky",    "requires": "AIRADAR_TG_API_ID"},
+    "openrouter":   {"label": "OpenRouter (каталог моделей)",   "dot": "violet", "requires": None},
+    "packages":     {"label": "npm / PyPI (AI SDK пакеты)",     "dot": "zinc",   "requires": None},
+    "fofa":         {"label": "FOFA (favicon-hash сканер)",     "dot": "red",    "requires": "AIRADAR_FOFA_KEY"},
+    "leaks":        {"label": "Gists / Pastebin (утечки)",      "dot": "zinc",   "requires": "AIRADAR_GITHUB_TOKEN"},
+}
+
+
+# Shared SELECT: every offer row carries its parent service's fields too, so a
+# single row maps directly to the serialized offer dict via offer_to_dict().
+_OFFER_SELECT = """
+SELECT
+    o.id                AS id,
+    o.service_id        AS service_id,
+    o.type              AS type,
+    o.amount            AS amount,
+    o.currency          AS currency,
+    o.models            AS models,
+    o.claim_steps       AS claim_steps,
+    o.requirements      AS requirements,
+    o.referral_required AS referral_required,
+    o.effort            AS effort,
+    o.unit              AS unit,
+    o.description       AS description,
+    o.url               AS url,
+    o.score             AS score,
+    o.status            AS offer_status,
+    o.first_seen_at     AS first_seen_at,
+    s.canonical_domain  AS canonical_domain,
+    s.name              AS service_name,
+    s.status            AS service_status,
+    s.reliability       AS reliability,
+    s.engine            AS engine,
+    s.domain_first_seen AS domain_first_seen
+FROM offers o
+JOIN services s ON o.service_id = s.id
+"""
+
+
+# --- datetime helpers ------------------------------------------------------
+def _dt_parse(s: Optional[str]) -> Optional[dt.datetime]:
+    """Storage TEXT string → naive datetime (templates need real datetimes)."""
+    if not s:
+        return None
+    if isinstance(s, dt.datetime):
+        return s
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+    ):
+        try:
+            return dt.datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    try:
+        d = dt.datetime.fromisoformat(s)
+        return d.replace(tzinfo=None) if d.tzinfo else d
+    except ValueError:
+        return None
+
+
+def _iso(s: Optional[str]) -> Optional[str]:
+    """Storage TEXT datetime → ISO-8601 string for JSON (matches old output)."""
+    d = _dt_parse(s)
+    return d.isoformat() if d else None
 
 
 # --- request bodies --------------------------------------------------------
@@ -42,35 +131,42 @@ class SourceUpdate(BaseModel):
     name: Optional[str] = None
 
 
+class CollectorUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    interval: Optional[int] = None
+
+
 # --- serialization ---------------------------------------------------------
-def offer_to_dict(offer: Offer, service: Optional[Service]) -> dict:
+def offer_to_dict(row: dict) -> dict:
+    """Map a joined offer+service row (dict) to the public offer shape."""
+    service_status = row.get("service_status")
     return {
-        "id": offer.id,
-        "service_id": offer.service_id,
-        "domain": service.canonical_domain if service else None,
-        "name": (service.name if service else None) or offer.url,
-        "type": offer.type,
-        "amount": offer.amount,
-        "currency": offer.currency,
-        "models": offer.models or [],
-        "claim_steps": offer.claim_steps,
-        "requirements": offer.requirements,
-        "referral_required": offer.referral_required,
-        "effort": offer.effort,
-        "unit": offer.unit,
-        "description": offer.description,
-        "url": offer.url,
-        "score": round(offer.score or 0.0, 4),
-        "status": service.status if service else offer.status,
-        "reliability": service.reliability if service else None,
-        "engine": service.engine if service else None,
-        "domain_first_seen": service.domain_first_seen.isoformat() if service and service.domain_first_seen else None,
-        "first_seen_at": offer.first_seen_at.isoformat() if offer.first_seen_at else None,
+        "id": row["id"],
+        "service_id": row["service_id"],
+        "domain": row.get("canonical_domain"),
+        "name": row.get("service_name") or row.get("url"),
+        "type": row.get("type"),
+        "amount": row.get("amount"),
+        "currency": row.get("currency"),
+        "models": json_decode(row.get("models")) or [],
+        "claim_steps": row.get("claim_steps"),
+        "requirements": row.get("requirements"),
+        "referral_required": bool(row.get("referral_required")),
+        "effort": row.get("effort"),
+        "unit": row.get("unit"),
+        "description": row.get("description"),
+        "url": row.get("url"),
+        "score": round(row.get("score") or 0.0, 4),
+        "status": service_status if service_status is not None else row.get("offer_status"),
+        "reliability": row.get("reliability"),
+        "engine": row.get("engine"),
+        "domain_first_seen": _iso(row.get("domain_first_seen")),
+        "first_seen_at": _iso(row.get("first_seen_at")),
     }
 
 
 def query_offers(
-    session,
+    db: Database,
     *,
     type: Optional[str] = None,
     effort: Optional[str] = None,
@@ -83,48 +179,59 @@ def query_offers(
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict]:
-    stmt = select(Offer, Service).join(Service, Offer.service_id == Service.id)
+    where: list[str] = []
+    params: list = []
     if type:
-        stmt = stmt.where(Offer.type == type)
+        where.append("o.type = ?"); params.append(type)
     if effort:
-        stmt = stmt.where(Offer.effort == effort)
+        where.append("o.effort = ?"); params.append(effort)
     if min_amount is not None:
-        stmt = stmt.where(Offer.amount >= min_amount)
+        where.append("o.amount >= ?"); params.append(min_amount)
     if status:
-        stmt = stmt.where(Service.status == status)
+        where.append("s.status = ?"); params.append(status)
     if since_hours:
-        import datetime as _dt
-        from .models import utcnow
-        cutoff = utcnow() - _dt.timedelta(hours=float(since_hours))
-        stmt = stmt.where(Offer.first_seen_at >= cutoff)
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=float(since_hours))
+        cutoff = cutoff.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S.%f")
+        where.append("o.first_seen_at >= ?"); params.append(cutoff)
     if q:
         like = f"%{q.lower()}%"
-        stmt = stmt.where(
-            func.lower(Service.canonical_domain).like(like)
-            | func.lower(func.coalesce(Service.name, "")).like(like)
-            | func.lower(func.coalesce(Offer.claim_steps, "")).like(like)
+        where.append(
+            "(LOWER(s.canonical_domain) LIKE ? "
+            "OR LOWER(COALESCE(s.name, '')) LIKE ? "
+            "OR LOWER(COALESCE(o.claim_steps, '')) LIKE ?)"
         )
+        params.extend([like, like, like])
+
     if sort == "new":
-        stmt = stmt.order_by(Offer.first_seen_at.desc(), Offer.score.desc())
+        order = "ORDER BY o.first_seen_at DESC, o.score DESC"
     elif sort == "amount":
-        stmt = stmt.order_by(Offer.amount.desc().nullslast(), Offer.score.desc())
+        # `o.amount IS NULL` sorts 0 (non-null) before 1 (null) → NULLs last.
+        order = "ORDER BY o.amount IS NULL, o.amount DESC, o.score DESC"
     else:
-        stmt = stmt.order_by(Offer.score.desc(), Offer.first_seen_at.desc())
-    rows = session.execute(stmt).all()
-    items = [offer_to_dict(o, s) for (o, s) in rows]
+        order = "ORDER BY o.score DESC, o.first_seen_at DESC"
+
+    sql = _OFFER_SELECT
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " " + order
+
+    rows = db.execute(sql, params)
+    items = [offer_to_dict(r) for r in rows]
 
     # Attach the primary (earliest) source per offer in one extra query.
     offer_ids = [it["id"] for it in items]
     if offer_ids:
-        src_rows = session.execute(
-            select(Signal.offer_id, Signal.source, Signal.source_url)
-            .where(Signal.offer_id.in_(offer_ids))
-            .order_by(Signal.observed_at.asc())
-        ).all()
+        placeholders = ", ".join(["?"] * len(offer_ids))
+        src_rows = db.execute(
+            f"SELECT offer_id, source, source_url FROM signals "
+            f"WHERE offer_id IN ({placeholders}) ORDER BY observed_at ASC",
+            offer_ids,
+        )
         src_map: dict[int, dict] = {}
-        for oid, src, surl in src_rows:
+        for r in src_rows:
+            oid = r["offer_id"]
             if oid not in src_map:
-                src_map[oid] = {"source": src, "source_url": surl}
+                src_map[oid] = {"source": r["source"], "source_url": r["source_url"]}
         for it in items:
             meta = src_map.get(it["id"], {})
             it["source"] = meta.get("source")
@@ -136,17 +243,26 @@ def query_offers(
     return items[offset: offset + limit]
 
 
-def compute_stats(session) -> dict:
-    services = session.scalar(select(func.count(Service.id))) or 0
-    offers = session.scalar(select(func.count(Offer.id))) or 0
-    active = session.scalar(select(func.count(Service.id)).where(Service.status == "active")) or 0
-    dead = session.scalar(select(func.count(Service.id)).where(Service.status == "dead")) or 0
-    by_type = dict(session.execute(select(Offer.type, func.count(Offer.id)).group_by(Offer.type)).all())
-    by_effort = dict(session.execute(
-        select(Offer.effort, func.count(Offer.id))
-        .where(Offer.effort.isnot(None))
-        .group_by(Offer.effort)
-    ).all())
+def compute_stats(db: Database) -> dict:
+    services = db.execute("SELECT COUNT(*) AS c FROM services")[0]["c"] or 0
+    offers = db.execute("SELECT COUNT(*) AS c FROM offers")[0]["c"] or 0
+    active = db.execute(
+        "SELECT COUNT(*) AS c FROM services WHERE status = ?", ["active"]
+    )[0]["c"] or 0
+    dead = db.execute(
+        "SELECT COUNT(*) AS c FROM services WHERE status = ?", ["dead"]
+    )[0]["c"] or 0
+    by_type = {
+        r["type"]: r["c"]
+        for r in db.execute("SELECT type, COUNT(*) AS c FROM offers GROUP BY type")
+    }
+    by_effort = {
+        r["effort"]: r["c"]
+        for r in db.execute(
+            "SELECT effort, COUNT(*) AS c FROM offers "
+            "WHERE effort IS NOT NULL GROUP BY effort"
+        )
+    }
     return {
         "services": services,
         "offers": offers,
@@ -165,14 +281,14 @@ def _parse_channel(source: str, source_url: Optional[str]) -> Optional[str]:
     return None
 
 
-def signal_to_dict(sig: Signal) -> dict:
-    """Serialize a signal with its original text for provenance display."""
+def signal_to_dict(sig: dict) -> dict:
+    """Serialize a signal row with its original text for provenance display."""
     return {
-        "source": sig.source,
-        "source_url": sig.source_url,
-        "channel": _parse_channel(sig.source, sig.source_url),
-        "raw_text": (sig.raw_text or "")[:1200],
-        "observed_at": sig.observed_at.isoformat() if sig.observed_at else None,
+        "source": sig.get("source"),
+        "source_url": sig.get("source_url"),
+        "channel": _parse_channel(sig.get("source"), sig.get("source_url")),
+        "raw_text": (sig.get("raw_text") or "")[:1200],
+        "observed_at": _iso(sig.get("observed_at")),
     }
 
 
@@ -185,7 +301,7 @@ def create_app() -> FastAPI:
         allow_origins=["http://localhost:3000", "http://127.0.0.1:3000",
                        "http://localhost:3001", "http://127.0.0.1:3001"],
         allow_credentials=True,
-        allow_methods=["GET"],
+        allow_methods=["GET", "PATCH"],
         allow_headers=["*"],
     )
 
@@ -202,34 +318,38 @@ def create_app() -> FastAPI:
         limit: int = Query(100, le=500),
         offset: int = 0,
     ):
-        with session_scope() as s:
-            items = query_offers(s, type=type, effort=effort, min_amount=min_amount, model=model,
+        with get_db() as db:
+            items = query_offers(db, type=type, effort=effort, min_amount=min_amount, model=model,
                                  status=status, q=q, sort=sort, since_hours=since_hours,
                                  limit=limit, offset=offset)
         return {"count": len(items), "items": items}
 
     @app.get("/api/services/{service_id}")
     def api_service(service_id: int):
-        with session_scope() as s:
-            svc = s.get(Service, service_id)
-            if not svc:
+        with get_db() as db:
+            svc_rows = db.execute("SELECT * FROM services WHERE id = ?", [service_id])
+            if not svc_rows:
                 raise HTTPException(404, "service not found")
-            offers = [offer_to_dict(o, svc) for o in
-                      s.scalars(select(Offer).where(Offer.service_id == service_id)).all()]
-            signals = s.scalars(
-                select(Signal).where(Signal.service_id == service_id)
-                .order_by(Signal.observed_at.desc()).limit(20)
-            ).all()
+            svc = svc_rows[0]
+            offer_rows = db.execute(
+                _OFFER_SELECT + " WHERE o.service_id = ?", [service_id]
+            )
+            offers = [offer_to_dict(r) for r in offer_rows]
+            signals = db.execute(
+                "SELECT * FROM signals WHERE service_id = ? "
+                "ORDER BY observed_at DESC LIMIT 20",
+                [service_id],
+            )
             return {
-                "id": svc.id,
-                "domain": svc.canonical_domain,
-                "name": svc.name,
-                "type": svc.type,
-                "engine": svc.engine,
-                "status": svc.status,
-                "reliability": svc.reliability,
-                "aliases": svc.aliases or [],
-                "domain_first_seen": svc.domain_first_seen.isoformat() if svc.domain_first_seen else None,
+                "id": svc["id"],
+                "domain": svc["canonical_domain"],
+                "name": svc["name"],
+                "type": svc["type"],
+                "engine": svc["engine"],
+                "status": svc["status"],
+                "reliability": svc["reliability"],
+                "aliases": json_decode(svc["aliases"]) or [],
+                "domain_first_seen": _iso(svc["domain_first_seen"]),
                 "offers": offers,
                 "signals": [signal_to_dict(sig) for sig in signals],
             }
@@ -237,17 +357,18 @@ def create_app() -> FastAPI:
     @app.get("/api/models")
     def api_models(include_dead: bool = False):
         """Models ranked by how many live services currently offer them."""
-        with session_scope() as s:
-            stmt = select(Offer.models, Service.status).join(
-                Service, Offer.service_id == Service.id
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT o.models AS models, s.status AS status "
+                "FROM offers o JOIN services s ON o.service_id = s.id"
             )
-            counts: dict[str, int] = {}
-            for models, status in s.execute(stmt).all():
-                if not include_dead and status == "dead":
-                    continue
-                for m in (models or []):
-                    key = str(m).lower()
-                    counts[key] = counts.get(key, 0) + 1
+        counts: dict[str, int] = {}
+        for r in rows:
+            if not include_dead and r["status"] == "dead":
+                continue
+            for m in (json_decode(r["models"]) or []):
+                key = str(m).lower()
+                counts[key] = counts.get(key, 0) + 1
         items = sorted(
             ({"model": k, "count": v} for k, v in counts.items()),
             key=lambda x: -x["count"],
@@ -256,8 +377,123 @@ def create_app() -> FastAPI:
 
     @app.get("/api/stats")
     def api_stats():
-        with session_scope() as s:
-            return compute_stats(s)
+        with get_db() as db:
+            return compute_stats(db)
+
+    @app.get("/api/collectors")
+    def api_collectors():
+        import os
+        from .collectors import get_registry, load_builtin
+        from .sched.source_config import sync_sources, get_source_config
+        load_builtin()
+        registry = get_registry()
+        with get_db() as db:  # noqa: F841 — ensures DB is live before sync
+            sync_sources(registry)  # ensure rows exist
+        out = []
+        for name, cls in sorted(registry.items()):
+            cfg = get_source_config(name)
+            meta = _COLLECTOR_META.get(name, {})
+            requires = meta.get("requires")
+            key_present = bool(os.environ.get(requires, "").strip()) if requires else None
+            out.append({
+                "name": name,
+                "label": meta.get("label", name),
+                "dot": meta.get("dot", "zinc"),
+                "kind": getattr(cls, "kind", "generic"),
+                "mode": getattr(cls, "mode", "poll"),
+                "interval": cfg.get("interval") or getattr(cls, "interval", 900),
+                "enabled": cfg.get("enabled", True),
+                "requires": requires,
+                "key_present": key_present,
+            })
+        return out
+
+    @app.patch("/api/collectors/{name}")
+    def api_patch_collector(name: str, body: CollectorUpdate):
+        import os  # noqa: F401
+        from .collectors import get_registry, load_builtin
+        load_builtin()
+        registry = get_registry()
+        if name not in registry:
+            raise HTTPException(404, "collector not found")
+        with get_db() as db:
+            rows = db.execute("SELECT id FROM sources WHERE name = ?", [name])
+            if rows:
+                sets, params = [], []
+                if body.enabled is not None:
+                    sets.append("enabled=?"); params.append(int(body.enabled))
+                if body.interval is not None:
+                    # store interval in config JSON
+                    existing = db.execute("SELECT config FROM sources WHERE name=?", [name])
+                    from .db.base import json_decode as _jd, json_encode as _je
+                    cfg = _jd((existing[0]["config"] if existing else None)) or {}
+                    cfg["interval"] = body.interval
+                    sets.append("config=?"); params.append(_je(cfg))
+                if sets:
+                    params.append(name)
+                    db.run(f"UPDATE sources SET {', '.join(sets)} WHERE name=?", params)
+            db.commit()
+        return {"ok": True}
+
+    @app.get("/api/keys")
+    def api_keys_status():
+        import os
+        from .collectors import get_registry, load_builtin
+        load_builtin()
+        registry = get_registry()
+        key_map: dict[str, list[str]] = {}
+        for name in registry:
+            req = _COLLECTOR_META.get(name, {}).get("requires")
+            if req:
+                key_map.setdefault(req, []).append(name)
+        result = []
+        for key, collectors in sorted(key_map.items()):
+            result.append({
+                "key": key,
+                "present": bool(os.environ.get(key, "").strip()),
+                "unlocks": collectors,
+            })
+        return result
+
+    @app.get("/api/analytics")
+    def api_analytics():
+        with get_db() as db:
+            # lead_time from lead_metrics table
+            lm_rows = db.execute(
+                "SELECT lead_hours FROM lead_metrics WHERE lead_hours IS NOT NULL"
+            )
+            hours = [r["lead_hours"] for r in lm_rows if r["lead_hours"] is not None]
+            avg_h = round(sum(hours) / len(hours), 2) if hours else None
+            median_h = None
+            if hours:
+                s = sorted(hours)
+                mid = len(s) // 2
+                median_h = round((s[mid - 1] + s[mid]) / 2 if len(s) % 2 == 0 else s[mid], 2)
+            count_ahead = sum(1 for h in hours if h > 0)
+
+            # by_source: signals grouped by source, sorted descending by count
+            src_rows = db.execute(
+                "SELECT source, COUNT(*) AS c FROM signals GROUP BY source ORDER BY c DESC"
+            )
+            by_source = [{"source": r["source"], "count": r["c"]} for r in src_rows]
+
+            # with_description / offers_total
+            with_desc = db.execute(
+                "SELECT COUNT(*) AS c FROM offers WHERE description IS NOT NULL AND description != ''"
+            )[0]["c"] or 0
+            total = db.execute("SELECT COUNT(*) AS c FROM offers")[0]["c"] or 0
+
+            return {
+                "lead_time": {
+                    "avg_hours": avg_h,
+                    "median_hours": median_h,
+                    "count_ahead": count_ahead,
+                    "count_total": len(hours),
+                },
+                "by_source": by_source,
+                "with_description": with_desc,
+                "offers_total": total,
+            }
 
     # ── Sources management (the "привязать" feature) ────────────────────────
 
@@ -305,10 +541,10 @@ def create_app() -> FastAPI:
         status: Optional[str] = None,
         q: Optional[str] = None,
     ):
-        with session_scope() as s:
-            items = query_offers(s, type=type, min_amount=min_amount, model=model,
+        with get_db() as db:
+            items = query_offers(db, type=type, min_amount=min_amount, model=model,
                                  status=status, q=q, limit=200)
-            stats = compute_stats(s)
+            stats = compute_stats(db)
         return TEMPLATES.TemplateResponse(request, "index.html", {
             "offers": items, "stats": stats,
             "filters": {"type": type or "", "min_amount": min_amount or "",
@@ -317,22 +553,37 @@ def create_app() -> FastAPI:
 
     @app.get("/services/{service_id}", response_class=HTMLResponse)
     def service_page(request: Request, service_id: int):
-        with session_scope() as s:
-            svc = s.get(Service, service_id)
-            if not svc:
+        with get_db() as db:
+            svc_rows = db.execute("SELECT * FROM services WHERE id = ?", [service_id])
+            if not svc_rows:
                 raise HTTPException(404, "service not found")
-            offers = [offer_to_dict(o, svc) for o in
-                      s.scalars(select(Offer).where(Offer.service_id == service_id)).all()]
-            signals = s.scalars(
-                select(Signal).where(Signal.service_id == service_id)
-                .order_by(Signal.observed_at.desc()).limit(20)
-            ).all()
+            svc = svc_rows[0]
+            offer_rows = db.execute(
+                _OFFER_SELECT + " WHERE o.service_id = ?", [service_id]
+            )
+            offers = [offer_to_dict(r) for r in offer_rows]
+            signal_rows = db.execute(
+                "SELECT * FROM signals WHERE service_id = ? "
+                "ORDER BY observed_at DESC LIMIT 20",
+                [service_id],
+            )
+            # Templates call `.date()` / `.strftime(...)` → pass real datetimes.
+            svc_ctx = {
+                "canonical_domain": svc["canonical_domain"],
+                "name": svc["name"],
+                "type": svc["type"],
+                "engine": svc["engine"],
+                "status": svc["status"],
+                "reliability": svc["reliability"],
+                "domain_first_seen": _dt_parse(svc["domain_first_seen"]),
+            }
             ctx_signals = [
-                {"source": sig.source, "source_url": sig.source_url,
-                 "observed_at": sig.observed_at} for sig in signals
+                {"source": r["source"], "source_url": r["source_url"],
+                 "observed_at": _dt_parse(r["observed_at"])}
+                for r in signal_rows
             ]
         return TEMPLATES.TemplateResponse(request, "service.html", {
-            "svc": svc, "offers": offers, "signals": ctx_signals,
+            "svc": svc_ctx, "offers": offers, "signals": ctx_signals,
         })
 
     return app
