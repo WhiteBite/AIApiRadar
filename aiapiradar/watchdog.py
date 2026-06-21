@@ -40,7 +40,10 @@ async def run_watchdog(
     with get_db() as db:
         sql = (
             "SELECT id, canonical_domain FROM services "
-            "WHERE last_checked IS NULL OR last_checked < ?"
+            "WHERE last_checked IS NULL OR last_checked < ? "
+            # also (re)enrich services whose offers still lack a description,
+            # so the blurb/models backfill completes even when status is fresh
+            "OR id IN (SELECT service_id FROM offers WHERE description IS NULL)"
         )
         params: list = [cutoff_str]
         if limit:

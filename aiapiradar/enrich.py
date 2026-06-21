@@ -314,9 +314,11 @@ async def _enrich_service_db(db, service_id: int, client: httpx.AsyncClient,
         [status, engine, rel, domain_first_seen, _dt_str(now), service_id],
     )
 
-    # Backfill the service's offers with facts parsed off the page: description
-    # (always refresh if we got one), plus models/amount only when still empty.
-    if p.description or p.models or p.amount is not None:
+    # Backfill the service's offers with facts parsed off the page. Use the page
+    # title as a description fallback so the field becomes non-NULL even when a
+    # site has no meta description (otherwise it'd be re-enriched forever).
+    desc = p.description or p.title
+    if desc or p.models or p.amount is not None:
         import json as _json
         offers = db.execute(
             "SELECT id, amount, models, description FROM offers WHERE service_id=?",
@@ -324,9 +326,9 @@ async def _enrich_service_db(db, service_id: int, client: httpx.AsyncClient,
         )
         for off in offers:
             sets, args = [], []
-            if p.description:
+            if desc:
                 sets.append("description=?")
-                args.append(p.description)
+                args.append(desc)
             if p.models and not off["models"]:
                 sets.append("models=?")
                 args.append(_json.dumps(p.models))
