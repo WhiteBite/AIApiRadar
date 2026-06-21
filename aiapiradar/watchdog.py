@@ -33,6 +33,7 @@ async def run_watchdog(
     limit: Optional[int] = 50,
     stale_hours: float = 24.0,
     timeout: float = 10.0,
+    with_crtsh: bool = True,
 ) -> int:
     cutoff_str = _dt_str(utcnow() - dt.timedelta(hours=stale_hours))
 
@@ -58,7 +59,7 @@ async def run_watchdog(
         ) as client:
             for row in rows:
                 try:
-                    await enrich_service(db, row["id"], client)
+                    await enrich_service(db, row["id"], client, do_crtsh=with_crtsh)
                 except Exception:
                     log.warning("watchdog enrich failed: %s", row["canonical_domain"])
 

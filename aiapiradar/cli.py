@@ -87,7 +87,8 @@ def cmd_enrich(args: argparse.Namespace) -> None:
     from .watchdog import run_watchdog
 
     init_db()
-    n = asyncio.run(run_watchdog(limit=args.limit, stale_hours=args.stale_hours))
+    n = asyncio.run(run_watchdog(limit=args.limit, stale_hours=args.stale_hours,
+                                 with_crtsh=not args.no_crtsh))
     log.info("enriched %d services", n)
 
 
@@ -259,6 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_enrich = sub.add_parser("enrich", help="probe/enrich stale services")
     p_enrich.add_argument("--limit", type=int, default=50)
     p_enrich.add_argument("--stale-hours", type=float, default=24.0)
+    p_enrich.add_argument("--no-crtsh", action="store_true",
+                          help="skip slow crt.sh domain-age lookups (fast page-only enrich)")
     p_enrich.set_defaults(func=cmd_enrich)
 
     sub.add_parser("score", help="recompute offer scores").set_defaults(func=cmd_score)

@@ -252,29 +252,60 @@ def _dt_str(d: Optional[dt.datetime]) -> Optional[str]:
     return d.strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+def _dt_parse_local(s: Optional[str]) -> Optional[dt.datetime]:
+    """Storage string → naive UTC datetime (mirror of store._dt_parse)."""
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return dt.datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    try:
+        d = dt.datetime.fromisoformat(s)
+        return d.replace(tzinfo=None) if d.tzinfo else d
+    except ValueError:
+        return None
+
+
 # ─── New Database-protocol path ───────────────────────────────────────────────
 
-async def _enrich_service_db(db, service_id: int, client: httpx.AsyncClient) -> None:
+async def _enrich_service_db(db, service_id: int, client: httpx.AsyncClient,
+                             do_crtsh: bool = True) -> None:
     from .db.base import Database
 
-    rows = db.execute("SELECT canonical_domain FROM services WHERE id = ?", [service_id])
+    rows = db.execute(
+        "SELECT canonical_domain, domain_first_seen FROM services WHERE id = ?",
+        [service_id],
+    )
     if not rows:
         log.warning("enrich_service: service %d not found", service_id)
         return
 
     domain = rows[0]["canonical_domain"]
+    existing_age = _dt_parse_local(rows[0]["domain_first_seen"])
     p = await probe(domain, client)
-    age = await crtsh_earliest(domain, client)
     now = utcnow()
+
+    # crt.sh is slow; only hit it when the domain age is still unknown (it never
+    # changes once known) and not explicitly disabled. Reuse the stored age for
+    # the reliability calc so skipping crt.sh doesn't regress the score.
+    age = existing_age
+    if do_crtsh and existing_age is None:
+        fetched = await crtsh_earliest(domain, client)
+        if fetched:
+            age = fetched
 
     status = "active" if p.alive else "dead"
     engine = p.engine
-    domain_first_seen = _dt_str(age)
     age_days = (
         (now.replace(tzinfo=None) - age.replace(tzinfo=None)).total_seconds() / 86400.0
         if age else None
     )
     rel = reliability_score(p.alive, p.has_pricing, bool(p.engine), age_days)
+    # Preserve a previously-known age if we didn't (re)fetch one.
+    domain_first_seen = _dt_str(age) if age else rows[0]["domain_first_seen"]
 
     db.run(
         "UPDATE services "
@@ -335,15 +366,16 @@ async def _enrich_service_orm(session, service, client: httpx.AsyncClient) -> No
 
 # ─── Public entry point ───────────────────────────────────────────────────────
 
-async def enrich_service(db_or_session, service_or_id, client: httpx.AsyncClient) -> None:
+async def enrich_service(db_or_session, service_or_id, client: httpx.AsyncClient,
+                         do_crtsh: bool = True) -> None:
     """Probe a service and update its fields.
 
-    New usage:   enrich_service(db, service_id, client)
+    New usage:   enrich_service(db, service_id, client, do_crtsh=...)
     Legacy usage: enrich_service(session, service_orm_obj, client)
     """
     from .db.base import Database
 
     if isinstance(db_or_session, Database):
-        await _enrich_service_db(db_or_session, service_or_id, client)
+        await _enrich_service_db(db_or_session, service_or_id, client, do_crtsh=do_crtsh)
     else:
         await _enrich_service_orm(db_or_session, service_or_id, client)
