@@ -16,9 +16,10 @@ const SOURCE_LABELS: Record<string, string> = {
   directories: "Directories",
   coupon: "Coupon",
   telegram: "Telegram",
-  export: "Export",
+  export: "Архив (чат)",
   youtube: "YouTube",
   v2ex: "v2ex",
+  crtsh: "CT Logs",
 };
 
 function getDisplayName(source: string): string {

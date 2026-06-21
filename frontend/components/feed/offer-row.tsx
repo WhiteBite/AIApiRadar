@@ -13,7 +13,7 @@ interface OfferRowProps {
 const SOURCE_SHORT: Record<string, string> = {
   certstream: "CT", forum_rss: "форум", nodeseek: "nodeseek", github: "gh",
   huggingface: "HF", producthunt: "PH", directories: "каталог", coupon: "купон",
-  telegram: "TG", youtube: "YT", export: "чат", crtsh: "CT",
+  telegram: "TG", youtube: "YT", export: "архив", crtsh: "CT",
 };
 
 // Left accent bar by effort (visible at a glance while scanning)

@@ -40,6 +40,7 @@ export default function FeedPage() {
   const [filters, setFilters] = useState<OffersFilters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const { ids: savedIds } = useSaved();
+  const [liveOnly, setLiveOnly] = useState(false);
 
   const tabFilter = TAB_FILTERS[filters.tab];
   const params: FetchOffersParams = {
@@ -74,6 +75,9 @@ export default function FeedPage() {
       const set = new Set(savedIds);
       list = list.filter((o) => set.has(o.id));
     }
+    if (liveOnly) {
+      list = list.filter((o) => o.source && o.source !== "export");
+    }
     if (filters.sort === "newest") {
       list = [...list].sort((a, b) =>
         (b.first_seen_at ? Date.parse(b.first_seen_at) : 0) -
@@ -82,7 +86,7 @@ export default function FeedPage() {
       list = [...list].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
     }
     return list;
-  }, [data, filters.sort, filters.tab, savedIds]);
+  }, [data, filters.sort, filters.tab, savedIds, liveOnly]);
 
   const selectedOffer: Offer | null = useMemo(
     () => offers.find((o) => o.id === selectedId) ?? null,
@@ -102,6 +106,19 @@ export default function FeedPage() {
         </Tabs>
 
         <div className="flex-1" />
+
+        <button
+          onClick={() => setLiveOnly((v) => !v)}
+          title="Скрыть сиды из чат-архива — показать только то, что нашли коллекторы"
+          className={
+            "h-8 px-2.5 rounded-md border text-xs transition-colors shrink-0 " +
+            (liveOnly
+              ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
+              : "border-zinc-700 text-zinc-400 hover:text-zinc-200")
+          }
+        >
+          только живые
+        </button>
 
         <div className="relative w-44">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
