@@ -1,0 +1,67 @@
+name: Daily LLM Reclassify
+
+on:
+  schedule:
+    # Run once a day at 03:00 UTC — well after the Gemini free-tier daily quota
+    # resets (Pacific midnight ≈ 07-08 UTC), so the full 20 req/day are available.
+    - cron: '0 3 * * *'
+  workflow_dispatch:  # allow manual trigger
+
+concurrency:
+  group: reclassify
+  cancel-in-progress: false
+
+jobs:
+  reclassify:
+    name: LLM reclassify offers + push to D1
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AIRADAR_PLATFORM: local
+      AIRADAR_DB_URL: sqlite:///./aiapiradar.db
+      AIRADAR_LLM_BASE_URL: https://generativelanguage.googleapis.com/v1beta/openai/
+      AIRADAR_LLM_MODEL: gemini-2.5-flash-lite
+      AIRADAR_LLM_FALLBACK_MODELS: gemini-2.0-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash,gemini-3.5-flash
+      AIRADAR_LLM_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      - name: Pull current D1 → local SQLite
+        run: |
+          npx --yes wrangler@4 d1 export aiapiradar --remote --output=dump.sql
+          python -c "
+          import sqlite3, os
+          if os.path.exists('aiapiradar.db'):
+              os.remove('aiapiradar.db')
+          db = sqlite3.connect('aiapiradar.db')
+          db.executescript(open('dump.sql', encoding='utf-8').read())
+          db.close()
+          "
+
+      - name: LLM reclassify (batch=15, ~8 requests, fits 20/day free quota)
+        run: python -m aiapiradar.cli reclassify --batch-size 15
+
+      - name: Purge blocked domains (safety net)
+        run: python -m aiapiradar.cli purge-blocked
+
+      - name: Rescore
+        run: python -m aiapiradar.cli score
+
+      - name: Push local SQLite → D1
+        run: |
+          python -m aiapiradar.cli dump-sql --output seed.sql
+          npx --yes wrangler@4 d1 execute aiapiradar --remote --file=seed.sql -y
