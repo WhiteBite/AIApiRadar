@@ -46,6 +46,32 @@ def canonical_domain(url_or_domain: str | None) -> str | None:
     return host or None
 
 
+# Multi-part public suffixes we care about (covers our dataset; not exhaustive).
+_MULTI_SUFFIXES = {
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "com.co", "com.cn", "com.br",
+    "com.au", "co.kr", "co.jp", "co.in", "com.tr", "com.mx", "com.ar",
+    "pp.ua", "co.il", "com.sg", "com.hk",
+}
+
+
+def registrable_domain(url_or_domain: str | None) -> str | None:
+    """Registrable domain (eTLD+1), dependency-free.
+
+    app.base44.com -> base44.com ; university.gumloop.com -> gumloop.com ;
+    rappi.com.co -> rappi.com.co ; kiro.dev -> kiro.dev
+    """
+    host = canonical_domain(url_or_domain)
+    if not host:
+        return None
+    parts = host.split(".")
+    if len(parts) <= 2:
+        return host
+    last2 = ".".join(parts[-2:])
+    if last2 in _MULTI_SUFFIXES:
+        return ".".join(parts[-3:])
+    return last2
+
+
 def extract_urls(text: str) -> list[str]:
     if not text:
         return []

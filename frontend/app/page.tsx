@@ -6,7 +6,7 @@ import { Search } from "lucide-react";
 
 import type { FeedTab, OffersFilters, Offer } from "@/lib/types";
 import { TAB_FILTERS } from "@/lib/types";
-import { fetchOffers, apiKeys } from "@/lib/api";
+import { fetchOffers, fetchModels, apiKeys } from "@/lib/api";
 import type { FetchOffersParams } from "@/lib/api";
 
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,15 +14,10 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { OfferList } from "@/components/feed/offer-list";
 import { OfferDetail, OfferDetailEmpty } from "@/components/feed/offer-detail";
-
-// ─── Constants ────────────────────────────────────────────────────────────────
+import { MODEL_COLORS } from "@/lib/colors";
 
 const DEFAULT_FILTERS: OffersFilters = {
-  tab: "all",
-  q: "",
-  minAmount: "",
-  model: "",
-  sort: "score",
+  tab: "all", q: "", minAmount: "", model: "", sort: "score",
 };
 
 const TABS: { value: FeedTab; label: string }[] = [
@@ -34,18 +29,15 @@ const TABS: { value: FeedTab; label: string }[] = [
 ];
 
 const SORT_OPTIONS = [
-  { value: "score", label: "Score" },
+  { value: "score", label: "Top" },
   { value: "amount", label: "Amount" },
   { value: "newest", label: "Newest" },
 ];
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function FeedPage() {
   const [filters, setFilters] = useState<OffersFilters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  // Build API params
   const tabFilter = TAB_FILTERS[filters.tab];
   const params: FetchOffersParams = {
     limit: 200,
@@ -62,103 +54,112 @@ export default function FeedPage() {
     staleTime: 30_000,
   });
 
-  // Client-side sorting
+  const { data: modelsData } = useQuery({
+    queryKey: apiKeys.models(),
+    queryFn: () => fetchModels(),
+    staleTime: 60_000,
+  });
+  const topModels = (modelsData?.items ?? []).slice(0, 10);
+
+  function toggleModel(m: string) {
+    setFilters((f) => ({ ...f, model: f.model === m ? "" : m }));
+  }
+
   const offers = useMemo(() => {
     let list = data?.items ?? [];
     if (filters.sort === "newest") {
-      list = [...list].sort((a, b) => {
-        const ta = a.first_seen_at ? new Date(a.first_seen_at).getTime() : 0;
-        const tb = b.first_seen_at ? new Date(b.first_seen_at).getTime() : 0;
-        return tb - ta;
-      });
+      list = [...list].sort((a, b) =>
+        (b.first_seen_at ? Date.parse(b.first_seen_at) : 0) -
+        (a.first_seen_at ? Date.parse(a.first_seen_at) : 0));
     } else if (filters.sort === "amount") {
       list = [...list].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
     }
     return list;
   }, [data, filters.sort]);
 
-  // Selected offer object
   const selectedOffer: Offer | null = useMemo(
     () => offers.find((o) => o.id === selectedId) ?? null,
     [offers, selectedId]
   );
 
-  // Auto-select first item when data loads
-  const firstId = offers[0]?.id ?? null;
-  if (selectedId === null && firstId !== null) {
-    setSelectedId(firstId);
-  }
-
-  function handleTabChange(tab: string) {
-    setFilters((f) => ({ ...f, tab: tab as FeedTab }));
-    setSelectedId(null);
-  }
-
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* ── Top bar: tabs ───────────────────────────────────────────────── */}
-      <div className="shrink-0 border-b border-zinc-800 bg-zinc-950">
-        <Tabs value={filters.tab} onValueChange={handleTabChange}>
-          <TabsList className="rounded-none border-0 bg-transparent px-4 gap-0">
+      {/* ── Toolbar ── */}
+      <div className="shrink-0 flex items-center gap-3 px-4 h-12 border-b border-zinc-800 bg-zinc-950">
+        <Tabs value={filters.tab} onValueChange={(t) => setFilters((f) => ({ ...f, tab: t as FeedTab }))}>
+          <TabsList className="border-0 bg-transparent p-0 gap-1">
             {TABS.map((t) => (
-              <TabsTrigger key={t.value} value={t.value}>
-                {t.label}
-              </TabsTrigger>
+              <TabsTrigger key={t.value} value={t.value}>{t.label}</TabsTrigger>
             ))}
           </TabsList>
         </Tabs>
+
+        <div className="flex-1" />
+
+        <div className="relative w-44">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+          <Input
+            placeholder="Search…"
+            value={filters.q}
+            onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+            className="pl-8 h-8 text-xs"
+          />
+        </div>
+        <Select
+          value={filters.sort}
+          onChange={(v) => setFilters((f) => ({ ...f, sort: v as OffersFilters["sort"] }))}
+          options={SORT_OPTIONS}
+          className="h-8 text-xs w-24"
+        />
+        <span className="text-[11px] text-zinc-600 tabular-nums w-12 text-right">
+          {isLoading ? "…" : offers.length}
+        </span>
       </div>
 
-      {/* ── Body: list + detail ─────────────────────────────────────────── */}
+      {/* ── Model filter chips ── */}
+      {topModels.length > 0 && (
+        <div className="shrink-0 flex items-center gap-1.5 px-4 h-10 border-b border-zinc-800 bg-zinc-950 overflow-x-auto">
+          <span className="text-[11px] text-zinc-600 shrink-0 mr-1">Модель:</span>
+          {topModels.map(({ model, count }) => {
+            const active = filters.model === model;
+            const color = MODEL_COLORS[model] ?? "bg-zinc-700/40 text-zinc-300 border-zinc-600";
+            return (
+              <button
+                key={model}
+                onClick={() => toggleModel(model)}
+                className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-all ${active ? color + " ring-1 ring-white/30" : "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
+                  }`}
+              >
+                {model}
+                <span className="text-[10px] opacity-70 tabular-nums">{count}</span>
+              </button>
+            );
+          })}
+          {filters.model && (
+            <button
+              onClick={() => setFilters((f) => ({ ...f, model: "" }))}
+              className="shrink-0 text-[11px] text-zinc-500 hover:text-zinc-300 ml-1"
+            >
+              сбросить
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Body: fixed-width list + detail fills rest ── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-
-        {/* ── Left: scrollable list panel ────────────────────────────────── */}
-        <div className="w-72 xl:w-80 shrink-0 flex flex-col border-r border-zinc-800 overflow-hidden">
-          {/* Search + sort bar */}
-          <div className="shrink-0 p-2 border-b border-zinc-800 flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
-              <Input
-                placeholder="Search…"
-                value={filters.q}
-                onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
-                className="pl-8 h-8 text-xs"
-              />
-            </div>
-            <Select
-              value={filters.sort}
-              onChange={(v) => setFilters((f) => ({ ...f, sort: v as OffersFilters["sort"] }))}
-              options={SORT_OPTIONS}
-              className="h-8 text-xs w-24 shrink-0"
-            />
-          </div>
-
-          {/* Count */}
-          <div className="shrink-0 px-3 py-1.5 border-b border-zinc-800/50">
-            <span className="text-[10px] text-zinc-600 tabular-nums">
-              {isLoading ? "Loading…" : `${offers.length} offers`}
-            </span>
-          </div>
-
-          {/* List */}
-          <div className="flex-1 overflow-y-auto">
-            <OfferList
-              offers={offers}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              isLoading={isLoading}
-              grouped={filters.tab === "all"}
-            />
-          </div>
+        <div className="w-[340px] xl:w-[380px] shrink-0 border-r border-zinc-800 overflow-y-auto">
+          <OfferList
+            offers={offers}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            isLoading={isLoading}
+          />
         </div>
 
-        {/* ── Right: detail panel ────────────────────────────────────────── */}
         <div className="flex-1 min-w-0 overflow-hidden p-3">
           {selectedOffer ? (
-            <OfferDetail
-              offer={selectedOffer}
-              onClose={() => setSelectedId(null)}
-            />
+            <OfferDetail offer={selectedOffer} onClose={() => setSelectedId(null)} />
           ) : (
             <OfferDetailEmpty />
           )}

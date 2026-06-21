@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS services (
     type              TEXT    NOT NULL DEFAULT 'other',
     engine            TEXT,
     models            TEXT,
+    aliases           TEXT,
     status            TEXT    NOT NULL DEFAULT 'new',
     reliability       REAL    NOT NULL DEFAULT 0.0,
     domain_first_seen TEXT,

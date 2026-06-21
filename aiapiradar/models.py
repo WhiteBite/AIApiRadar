@@ -54,6 +54,7 @@ class Service(Base):
     type: Mapped[str] = mapped_column(String(32), default="other")
     engine: Mapped[Optional[str]] = mapped_column(String(64))  # new-api/one-api/sub2api/...
     models: Mapped[Optional[list]] = mapped_column(JSON)
+    aliases: Mapped[Optional[list]] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(16), default="new")
     reliability: Mapped[float] = mapped_column(Float, default=0.0)
     domain_first_seen: Mapped[Optional[dt.datetime]] = mapped_column(DateTime(timezone=True))

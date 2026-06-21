@@ -16,12 +16,30 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from .db import session_scope
 from .models import Offer, Service, Signal
+from . import sources as sources_mod
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+# --- request bodies --------------------------------------------------------
+class SourceCreate(BaseModel):
+    type: str                              # "telegram" | "rss" | "collector"
+    channel: Optional[str] = None          # telegram: @channel or channel
+    topic_id: Optional[int] = None         # telegram: forum topic id
+    name: Optional[str] = None             # non-telegram display name
+    config: Optional[dict] = None
+    enabled: bool = True
+
+
+class SourceUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    config: Optional[dict] = None
+    name: Optional[str] = None
 
 
 # --- serialization ---------------------------------------------------------
@@ -81,6 +99,24 @@ def query_offers(
     stmt = stmt.order_by(Offer.score.desc(), Offer.first_seen_at.desc())
     rows = session.execute(stmt).all()
     items = [offer_to_dict(o, s) for (o, s) in rows]
+
+    # Attach the primary (earliest) source per offer in one extra query.
+    offer_ids = [it["id"] for it in items]
+    if offer_ids:
+        src_rows = session.execute(
+            select(Signal.offer_id, Signal.source, Signal.source_url)
+            .where(Signal.offer_id.in_(offer_ids))
+            .order_by(Signal.observed_at.asc())
+        ).all()
+        src_map: dict[int, dict] = {}
+        for oid, src, surl in src_rows:
+            if oid not in src_map:
+                src_map[oid] = {"source": src, "source_url": surl}
+        for it in items:
+            meta = src_map.get(it["id"], {})
+            it["source"] = meta.get("source")
+            it["source_url"] = meta.get("source_url")
+
     if model:  # JSON membership: simplest to post-filter
         m = model.lower()
         items = [it for it in items if any(m in str(x).lower() for x in it["models"])]
@@ -105,6 +141,25 @@ def compute_stats(session) -> dict:
         "dead": dead,
         "by_type": by_type,
         "by_effort": by_effort,
+    }
+
+
+def _parse_channel(source: str, source_url: Optional[str]) -> Optional[str]:
+    """Extract a human channel/origin label from a signal."""
+    if source_url and "t.me/" in source_url:
+        tail = source_url.split("t.me/", 1)[1].split("/")[0]
+        return f"@{tail}" if tail and not tail.startswith("+") else "Telegram"
+    return None
+
+
+def signal_to_dict(sig: Signal) -> dict:
+    """Serialize a signal with its original text for provenance display."""
+    return {
+        "source": sig.source,
+        "source_url": sig.source_url,
+        "channel": _parse_channel(sig.source, sig.source_url),
+        "raw_text": (sig.raw_text or "")[:1200],
+        "observed_at": sig.observed_at.isoformat() if sig.observed_at else None,
     }
 
 
@@ -157,19 +212,73 @@ def create_app() -> FastAPI:
                 "engine": svc.engine,
                 "status": svc.status,
                 "reliability": svc.reliability,
+                "aliases": svc.aliases or [],
                 "domain_first_seen": svc.domain_first_seen.isoformat() if svc.domain_first_seen else None,
                 "offers": offers,
-                "signals": [
-                    {"source": sig.source, "source_url": sig.source_url,
-                     "observed_at": sig.observed_at.isoformat() if sig.observed_at else None}
-                    for sig in signals
-                ],
+                "signals": [signal_to_dict(sig) for sig in signals],
             }
+
+    @app.get("/api/models")
+    def api_models(include_dead: bool = False):
+        """Models ranked by how many live services currently offer them."""
+        with session_scope() as s:
+            stmt = select(Offer.models, Service.status).join(
+                Service, Offer.service_id == Service.id
+            )
+            counts: dict[str, int] = {}
+            for models, status in s.execute(stmt).all():
+                if not include_dead and status == "dead":
+                    continue
+                for m in (models or []):
+                    key = str(m).lower()
+                    counts[key] = counts.get(key, 0) + 1
+        items = sorted(
+            ({"model": k, "count": v} for k, v in counts.items()),
+            key=lambda x: -x["count"],
+        )
+        return {"items": items}
 
     @app.get("/api/stats")
     def api_stats():
         with session_scope() as s:
             return compute_stats(s)
+
+    # ── Sources management (the "привязать" feature) ────────────────────────
+
+    @app.get("/api/sources")
+    def api_list_sources(type: Optional[str] = None):
+        return {"items": sources_mod.list_sources(type)}
+
+    @app.post("/api/sources")
+    def api_create_source(body: SourceCreate):
+        # For telegram: build a stable unique name from channel(+topic).
+        if body.type == "telegram":
+            ch = (body.channel or "").lstrip("@").strip()
+            if not ch:
+                raise HTTPException(400, "channel is required for telegram sources")
+            config = {"channel": ch}
+            if body.topic_id is not None:
+                config["topic_id"] = body.topic_id
+            name = f"@{ch}" + (f"#{body.topic_id}" if body.topic_id else "")
+        else:
+            config = body.config or {}
+            name = body.name or body.type
+        sid = sources_mod.create_source(body.type, name, config, body.enabled)
+        return sources_mod.get_source(sid)
+
+    @app.patch("/api/sources/{source_id}")
+    def api_update_source(source_id: int, body: SourceUpdate):
+        ok = sources_mod.update_source(
+            source_id, enabled=body.enabled, config=body.config, name=body.name
+        )
+        if not ok:
+            raise HTTPException(400, "nothing to update")
+        return sources_mod.get_source(source_id)
+
+    @app.delete("/api/sources/{source_id}")
+    def api_delete_source(source_id: int):
+        sources_mod.delete_source(source_id)
+        return {"ok": True}
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(

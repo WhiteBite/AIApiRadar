@@ -39,6 +39,8 @@ export interface Offer {
   requirements: string | null;
   referral_required: boolean;
   url: string | null;
+  source: string | null;        // NEW — collector that found it (certstream, telegram…)
+  source_url: string | null;    // NEW — link to the original post/page
   score: number;
   status: ServiceStatus;
   reliability: number | null;
@@ -60,14 +62,31 @@ export interface Service {
   engine: string | null;
   status: ServiceStatus;
   reliability: number;
+  aliases: string[];            // NEW — other hosts merged into this entity
   domain_first_seen: string | null;
   offers: Offer[];
   signals: Signal[];
 }
 
+export interface SourceItem {
+  id: number;
+  name: string;
+  type: string;                 // "telegram" | "rss" | "collector"
+  enabled: boolean;
+  last_run: string | null;
+  config: { channel?: string; topic_id?: number } & Record<string, unknown>;
+}
+
+export interface ModelCount {
+  model: string;
+  count: number;
+}
+
 export interface Signal {
   source: string;
   source_url: string | null;
+  channel: string | null;       // NEW — @channel parsed from t.me url
+  raw_text: string | null;      // NEW — original post text
   observed_at: string | null;
 }
 

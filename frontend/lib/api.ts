@@ -1,4 +1,4 @@
-import type { Offer, OffersResponse, Service, Stats } from "./types";
+import type { Offer, OffersResponse, Service, Stats, SourceItem, ModelCount } from "./types";
 
 // Server components (RSC/SSR) need an absolute URL.
 // Client components use relative paths → Next.js rewrites proxy them to FastAPI
@@ -54,9 +54,46 @@ export async function fetchStats(): Promise<Stats> {
   return get<Stats>("/api/stats");
 }
 
+export async function fetchModels(): Promise<{ items: ModelCount[] }> {
+  return get<{ items: ModelCount[] }>("/api/models");
+}
+
+export async function fetchSources(type?: string): Promise<{ items: SourceItem[] }> {
+  return get<{ items: SourceItem[] }>("/api/sources", type ? { type } : undefined);
+}
+
+async function mutate<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const base = typeof window === "undefined" ? (process.env.API_URL ?? "http://127.0.0.1:8000") : "";
+  const res = await fetch(`${base}${path}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export async function createSource(body: {
+  type: string; channel?: string; topic_id?: number; enabled?: boolean;
+}): Promise<SourceItem> {
+  return mutate<SourceItem>("/api/sources", "POST", body);
+}
+
+export async function updateSource(
+  id: number, body: { enabled?: boolean; config?: object; name?: string }
+): Promise<SourceItem> {
+  return mutate<SourceItem>(`/api/sources/${id}`, "PATCH", body);
+}
+
+export async function deleteSource(id: number): Promise<void> {
+  await mutate(`/api/sources/${id}`, "DELETE");
+}
+
 // TanStack Query cache keys
 export const apiKeys = {
   offers: (p: FetchOffersParams) => ["offers", p] as const,
   service: (id: number) => ["service", id] as const,
   stats: () => ["stats"] as const,
+  models: () => ["models"] as const,
+  sources: () => ["sources"] as const,
 };

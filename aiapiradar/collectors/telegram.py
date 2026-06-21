@@ -53,6 +53,25 @@ class TelegramCollector(Collector):
     _thread: threading.Thread | None = None
     _lock = threading.Lock()
 
+    @classmethod
+    def _load_config(cls) -> tuple[list[str], dict[str, int]]:
+        """Load enabled channels + topic filters from the DB sources table.
+
+        Falls back to the hardcoded CHANNELS list if none configured yet.
+        Returns (channel_list, {channel: topic_id}).
+        """
+        try:
+            from ..sources import enabled_telegram_channels
+            configured = enabled_telegram_channels()
+        except Exception:
+            log.warning("could not load telegram sources from DB", exc_info=False)
+            configured = []
+        if not configured:
+            return list(cls.CHANNELS), {}
+        channels = [c["channel"] for c in configured]
+        topics = {c["channel"]: c["topic_id"] for c in configured if c.get("topic_id")}
+        return channels, topics
+
     @staticmethod
     def configured() -> bool:
         s = get_settings()
@@ -69,10 +88,23 @@ class TelegramCollector(Collector):
         asyncio.set_event_loop(loop)
         client = TelegramClient(s.tg_session, s.tg_api_id, s.tg_api_hash, loop=loop)
 
-        @client.on(events.NewMessage(chats=cls.CHANNELS))
+        channels, topics = cls._load_config()
+
+        def _topic_ok(event, channel: str) -> bool:
+            """If a topic_id is configured for this channel, keep only that topic."""
+            want = topics.get(channel)
+            if not want:
+                return True
+            reply = getattr(event.message, "reply_to", None)
+            tid = getattr(reply, "reply_to_top_id", None) or getattr(reply, "reply_to_msg_id", None)
+            return tid == want
+
+        @client.on(events.NewMessage(chats=channels))
         async def _handler(event):  # noqa: ANN001
             chat = await event.get_chat()
             channel = getattr(chat, "username", None) or str(event.chat_id)
+            if not _topic_ok(event, channel):
+                return
             sig = build_signal(event.message.message, channel, event.message.id,
                                event.message.date)
             with cls._lock:
@@ -80,7 +112,7 @@ class TelegramCollector(Collector):
 
         try:
             client.start()
-            log.info("telegram client started; listening on %d channels", len(cls.CHANNELS))
+            log.info("telegram client started; listening on %d channels", len(channels))
             client.run_until_disconnected()
         except Exception:
             log.exception("telegram client error")

@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS services (
     type              TEXT    NOT NULL DEFAULT 'other',
     engine            TEXT,
     models            TEXT,           -- JSON array
+    aliases           TEXT,           -- JSON array of all hosts seen
     status            TEXT    NOT NULL DEFAULT 'new',
     reliability       REAL    NOT NULL DEFAULT 0.0,
     domain_first_seen TEXT,           -- ISO datetime

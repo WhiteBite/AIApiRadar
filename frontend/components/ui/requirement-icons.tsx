@@ -34,11 +34,11 @@ export function RequirementIcons({ offer, className }: RequirementIconsProps) {
   } satisfies Record<string, boolean>;
 
   const items = [
-    { key: "email", show: needs.email, emoji: "📧", label: "Email" },
-    { key: "referral", show: needs.referral, emoji: "🔗", label: "Referral" },
-    { key: "card", show: needs.card, emoji: "💳", label: "Card" },
+    { key: "email", show: needs.email, emoji: "📧", label: "Почта" },
+    { key: "referral", show: needs.referral, emoji: "🔗", label: "Реф-ссылка" },
+    { key: "card", show: needs.card, emoji: "💳", label: "Карта" },
     { key: "vpn", show: needs.vpn, emoji: "🌐", label: "VPN" },
-    { key: "star", show: needs.star, emoji: "⭐", label: "Star" },
+    { key: "star", show: needs.star, emoji: "⭐", label: "GitHub звезда" },
   ] as const;
 
   const visible = items.filter((i) => i.show);
@@ -46,12 +46,12 @@ export function RequirementIcons({ offer, className }: RequirementIconsProps) {
   if (visible.length === 0) return null;
 
   return (
-    <div className={cn("flex flex-wrap gap-1.5", className)}>
+    <div className={cn("flex flex-wrap gap-2", className)}>
       {visible.map(({ key, emoji, label }) => (
         <span
           key={key}
           className={cn(
-            "inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium",
+            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-sm font-medium",
             REQ_STYLES[key]
           )}
         >

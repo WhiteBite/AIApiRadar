@@ -132,7 +132,7 @@ class HeuristicClassifier:
             confidence += 0.25
         if models:
             confidence += 0.15
-        name = domains[0].split(".")[0] if domains else None
+        name = domains[0] if domains else None
         effort = _detect_effort(text, referral)
         unit = _detect_unit(text, amount, currency)
         return Classification(

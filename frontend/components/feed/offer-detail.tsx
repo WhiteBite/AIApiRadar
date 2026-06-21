@@ -1,204 +1,210 @@
 "use client";
 
-import { ArrowLeft, ExternalLink } from "lucide-react";
-import { cn, timeAgo, fmtLead } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, ExternalLink, Radio, Star } from "lucide-react";
+import { cn, timeAgo } from "@/lib/utils";
 import { fmtValue } from "@/lib/types";
-import type { Offer } from "@/lib/types";
+import type { Offer, Signal } from "@/lib/types";
+import { fetchService, apiKeys } from "@/lib/api";
 import { EffortBadge } from "@/components/ui/effort-badge";
 import { TypeBadge } from "@/components/ui/type-badge";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ModelTag } from "@/components/ui/model-tag";
 import { RequirementIcons } from "@/components/ui/requirement-icons";
 import { LeadBadge } from "@/components/ui/lead-badge";
-import { ScoreBar } from "@/components/ui/score-bar";
 
 export interface OfferDetailProps {
   offer: Offer;
   onClose?: () => void;
 }
 
-/** Delta between domain discovery (certstream) and offer first seen elsewhere. */
-function computeLeadHours(offer: Offer): number | null {
-  if (!offer.domain_first_seen || !offer.first_seen_at) return null;
-  const domainMs = new Date(offer.domain_first_seen).getTime();
-  const offerMs = new Date(offer.first_seen_at).getTime();
-  const diffHours = (offerMs - domainMs) / 3_600_000;
-  return diffHours > 0 ? diffHours : null;
-}
-
-/** Split a claim_steps string into individual step strings. */
-function parseClaimSteps(claimSteps: string): string[] {
-  return claimSteps
-    .split(/\n|(?=\d+\.\s)/)
-    .map((s) => s.replace(/^\d+\.\s*/, "").trim())
-    .filter(Boolean);
-}
-
-/** Pick the accent color based on amount unit. */
-function getAmountColor(unit: Offer["unit"]): string {
-  if (unit === "usd") return "text-emerald-400";
+function valueColor(unit: Offer["unit"]): string {
   if (unit === "credits") return "text-amber-400";
   if (unit === "days" || unit === "months") return "text-blue-400";
-  return "text-zinc-100";
+  return "text-emerald-400";
+}
+
+function parseClaimSteps(s: string): string[] {
+  return s
+    .split(/\n|(?=\d+[.)]\s)|●|•|▪/)
+    .map((x) => x.replace(/^\s*\d+[.)]\s*/, "").trim())
+    .filter((x) => x.length > 2);
+}
+
+function pickProvenance(signals: Signal[]): Signal | null {
+  if (!signals.length) return null;
+  return [...signals].sort(
+    (a, b) => (b.raw_text?.length ?? 0) - (a.raw_text?.length ?? 0)
+  )[0];
+}
+
+function Section({ title, right, children }: {
+  title: string; right?: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-2.5">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+          {title}
+        </h3>
+        {right}
+      </div>
+      {children}
+    </section>
+  );
 }
 
 export function OfferDetail({ offer, onClose }: OfferDetailProps) {
-  const title = offer.name ?? offer.domain ?? "Unknown";
-  const showSubdomain =
-    offer.name && offer.domain && offer.name !== offer.domain;
-  const amountStr = fmtValue(offer.amount, offer.unit, offer.currency);
-  const amountColor = getAmountColor(offer.unit);
-  const leadHours = computeLeadHours(offer);
-  const leadLabel = fmtLead(leadHours);
+  const { data: service } = useQuery({
+    queryKey: apiKeys.service(offer.service_id),
+    queryFn: () => fetchService(offer.service_id),
+    staleTime: 60_000,
+  });
+
+  const domain = offer.domain ?? offer.name ?? "Unknown";
+  const value = fmtValue(offer.amount, offer.unit, offer.currency);
   const steps = offer.claim_steps ? parseClaimSteps(offer.claim_steps) : [];
+  const prov = service ? pickProvenance(service.signals) : null;
+  const aliases = service?.aliases ?? [];
+
+  let leadHours: number | null = null;
+  if (offer.domain_first_seen && offer.first_seen_at) {
+    const d = (Date.parse(offer.first_seen_at) - Date.parse(offer.domain_first_seen)) / 3.6e6;
+    leadHours = d > 0 ? d : null;
+  }
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-      {/* Mobile back button — hidden on md+ */}
-      {onClose && (
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-800 md:hidden">
-          <button
-            onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </button>
-        </div>
-      )}
-
-      <div className="flex-1 overflow-y-auto">
-        {/* ── Header ── */}
-        <div className="px-4 pt-4 pb-3 border-b border-zinc-800">
-          <div className="flex items-start justify-between gap-3">
-            <p className="font-semibold text-zinc-100 text-base leading-snug truncate flex-1 min-w-0">
-              {title}
-            </p>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <EffortBadge effort={offer.effort} variant="pill" />
-              <TypeBadge type={offer.type} />
-            </div>
-          </div>
-          {showSubdomain && (
-            <p className="mt-0.5 text-xs text-zinc-500 truncate">
-              {offer.domain}
-            </p>
+    <div className="flex flex-col h-full bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden">
+      {/* ── HERO (always visible) ── */}
+      <div className="shrink-0 px-6 pt-5 pb-5 border-b border-zinc-800 bg-zinc-900">
+        <div className="flex items-start gap-3">
+          {onClose && (
+            <button onClick={onClose} className="md:hidden mt-1 text-zinc-500 hover:text-zinc-300">
+              <ArrowLeft className="w-5 h-5" />
+            </button>
           )}
+          <h2 className="flex-1 min-w-0 truncate text-2xl font-semibold text-white leading-tight">
+            {domain}
+          </h2>
+          <div className="flex items-center gap-1.5 shrink-0 pt-1">
+            <EffortBadge effort={offer.effort} variant="pill" />
+            <TypeBadge type={offer.type} />
+          </div>
         </div>
 
-        {/* ── Amount ── */}
-        {amountStr && (
-          <div className="px-4 pt-4 pb-3 border-b border-zinc-800">
-            <p className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">
-              Amount
-            </p>
-            <p
-              className={cn(
-                "text-5xl font-bold tabular-nums leading-none",
-                amountColor
-              )}
-            >
-              {amountStr}
-            </p>
-            {offer.models.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-3">
-                {offer.models.map((m) => (
-                  <ModelTag key={m} model={m} />
-                ))}
-              </div>
-            )}
-          </div>
+        {aliases.length > 0 && (
+          <p className="mt-1 text-xs text-zinc-500 truncate">
+            также: {aliases.join(", ")}
+          </p>
         )}
 
-        {/* ── Requirements ── */}
-        <div className="px-4 pt-4 pb-3 border-b border-zinc-800">
-          <p className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">
-            Requirements
-          </p>
-          <RequirementIcons offer={offer} />
-        </div>
-
-        {/* ── How to claim ── */}
-        <div className="px-4 pt-4 pb-3 border-b border-zinc-800">
-          <p className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">
-            How to claim
-          </p>
-          {steps.length > 0 ? (
-            <ol className="space-y-2">
-              {steps.map((step, i) => (
-                <li key={i} className="flex gap-2.5 text-sm text-zinc-300">
-                  <span className="text-zinc-500 shrink-0 tabular-nums select-none">
-                    {i + 1}.
-                  </span>
-                  <span>{step}</span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="text-sm text-zinc-500 italic">
-              Steps not yet extracted. Check the source.
-            </p>
-          )}
-        </div>
-
-        {/* ── Scores ── */}
-        <div className="px-4 pt-4 pb-3 border-b border-zinc-800 space-y-2">
-          {offer.reliability !== null && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-500 w-16 shrink-0">
-                Reliability
-              </span>
-              <ScoreBar score={offer.reliability} className="flex-1" />
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500 w-16 shrink-0">Score</span>
-            <ScoreBar score={offer.score} className="flex-1" />
-          </div>
-        </div>
-
-        {/* ── Footer ── */}
-        <div className="px-4 pt-4 pb-5 space-y-3">
-          {/* Found time + lead */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-zinc-500">
-              Found {timeAgo(offer.first_seen_at)}
+        <div className="flex items-center gap-3 mt-3 flex-wrap">
+          {value && (
+            <span className={cn("text-3xl font-bold tabular-nums leading-none", valueColor(offer.unit))}>
+              {value}
             </span>
-            {leadLabel && (
-              <>
-                <span className="text-zinc-700 select-none">·</span>
-                <LeadBadge leadHours={leadHours} />
-              </>
-            )}
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {offer.models.map((m) => <ModelTag key={m} model={m} />)}
           </div>
+        </div>
 
-          {/* Status */}
-          <StatusBadge status={offer.status} />
-
-          {/* Open button */}
+        {/* CTA row — always reachable, no scroll needed */}
+        <div className="flex items-center gap-2 mt-4">
           {offer.url && (
             <a
               href={offer.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-sm font-medium transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors"
             >
-              Open {offer.domain ?? offer.name ?? "site"} →
-              <ExternalLink className="w-4 h-4 shrink-0" />
+              Открыть сайт <ExternalLink className="w-4 h-4" />
             </a>
           )}
+          <button
+            className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+            title="Сохранить (скоро)"
+          >
+            <Star className="w-4 h-4" />
+          </button>
+          <div className="ml-1 shrink-0">
+            <StatusBadge status={offer.status} />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Scrollable content, constrained reading width ── */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-2xl px-6 py-6 space-y-7">
+
+          {/* Как получить */}
+          <Section title="Как получить">
+            {steps.length > 0 ? (
+              <ol className="space-y-2.5">
+                {steps.map((step, i) => (
+                  <li key={i} className="flex gap-3 text-[15px] text-zinc-200 leading-relaxed">
+                    <span className="flex items-center justify-center shrink-0 w-5 h-5 mt-0.5 rounded-full bg-zinc-800 text-zinc-400 text-xs font-medium tabular-nums">
+                      {i + 1}
+                    </span>
+                    <span className="min-w-0">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="text-sm text-zinc-500 italic">
+                Шаги не извлечены — смотри оригинал поста ниже.
+              </p>
+            )}
+          </Section>
+
+          {/* Откуда */}
+          <Section
+            title="Откуда"
+            right={leadHours ? <LeadBadge leadHours={leadHours} /> : undefined}
+          >
+            {prov ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm text-zinc-400">
+                  <Radio className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                  <span className="font-medium text-zinc-300">{prov.channel ?? prov.source}</span>
+                  {prov.observed_at && <span className="text-zinc-500">· {timeAgo(prov.observed_at)}</span>}
+                </div>
+                {prov.raw_text && (
+                  <blockquote className="text-[15px] text-zinc-300 leading-relaxed bg-zinc-950/70 border border-zinc-800 rounded-lg px-4 py-3 whitespace-pre-wrap">
+                    {prov.raw_text}
+                  </blockquote>
+                )}
+                {prov.source_url?.startsWith("http") && (
+                  <a
+                    href={prov.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300"
+                  >
+                    Открыть оригинал <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-500 italic">Загрузка источника…</p>
+            )}
+          </Section>
+
+          {/* Требования */}
+          <Section title="Требования">
+            <RequirementIcons offer={offer} />
+          </Section>
         </div>
       </div>
     </div>
   );
 }
 
-/** Empty state shown when no offer is selected. */
 export function OfferDetailEmpty() {
   return (
-    <div className="flex flex-col items-center justify-center h-full bg-zinc-900 border border-zinc-800 rounded-xl text-center p-8 gap-3">
-      <ArrowLeft className="w-8 h-8 text-zinc-700" />
-      <p className="text-zinc-500 text-sm">Select an offer to see details</p>
+    <div className="flex flex-col items-center justify-center h-full bg-zinc-900/30 border border-dashed border-zinc-800 rounded-xl text-center p-8 gap-3">
+      <ArrowLeft className="w-7 h-7 text-zinc-700" />
+      <p className="text-sm text-zinc-500">Выбери оффер слева — здесь появятся детали</p>
     </div>
   );
 }

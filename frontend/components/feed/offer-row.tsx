@@ -3,8 +3,6 @@
 import { cn, timeAgo } from "@/lib/utils";
 import { fmtValue } from "@/lib/types";
 import type { Offer } from "@/lib/types";
-import { EFFORT_DOT } from "@/lib/colors";
-import { ModelTag } from "@/components/ui/model-tag";
 
 interface OfferRowProps {
   offer: Offer;
@@ -12,57 +10,66 @@ interface OfferRowProps {
   onSelect: (id: number) => void;
 }
 
-/** Compact one-line row for the master-detail list panel. */
+const SOURCE_SHORT: Record<string, string> = {
+  certstream: "CT", forum_rss: "форум", nodeseek: "nodeseek", github: "gh",
+  huggingface: "HF", producthunt: "PH", directories: "каталог", coupon: "купон",
+  telegram: "TG", youtube: "YT", export: "чат", crtsh: "CT",
+};
+
+// Left accent bar by effort (visible at a glance while scanning)
+const EFFORT_BORDER: Record<string, string> = {
+  easy: "border-l-emerald-500/70",
+  medium: "border-l-amber-500/70",
+  hard: "border-l-red-500/70",
+};
+
 export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
-  const dotColor = offer.effort ? (EFFORT_DOT[offer.effort] ?? "bg-zinc-500") : "bg-zinc-600";
-  const name = offer.name ?? offer.domain ?? "Unknown";
+  const domain = offer.domain ?? offer.name ?? "—";
   const value = fmtValue(offer.amount, offer.unit, offer.currency);
+  const valueColor =
+    offer.unit === "credits" ? "text-amber-400"
+      : offer.unit === "days" || offer.unit === "months" ? "text-blue-400"
+        : "text-emerald-400";
+  const src = offer.source ? (SOURCE_SHORT[offer.source] ?? offer.source) : null;
+  const accent = isSelected
+    ? "border-l-blue-500"
+    : (offer.effort ? EFFORT_BORDER[offer.effort] : "border-l-transparent") ?? "border-l-transparent";
 
   return (
     <button
       type="button"
       onClick={() => onSelect(offer.id)}
       className={cn(
-        "w-full text-left px-3 py-2.5 transition-colors",
-        isSelected
-          ? "bg-zinc-800 border-l-2 border-l-zinc-400"
-          : "border-l-2 border-l-transparent hover:bg-zinc-800/60"
+        "w-full text-left pl-3 pr-3.5 py-2.5 border-l-[3px] transition-colors",
+        accent,
+        isSelected ? "bg-zinc-800" : "hover:bg-zinc-800/50"
       )}
     >
-      <div className="flex items-center gap-2 min-w-0">
-        {/* Effort color dot */}
-        <span className={cn("w-2 h-2 rounded-full shrink-0", dotColor)} />
-
-        {/* Name */}
-        <span
-          className={cn(
-            "flex-1 min-w-0 truncate text-sm font-medium",
-            isSelected ? "text-zinc-100" : "text-zinc-300"
-          )}
-        >
-          {name}
+      {/* line 1: domain + value */}
+      <div className="flex items-baseline gap-2 min-w-0">
+        <span className={cn(
+          "flex-1 min-w-0 truncate text-[15px] font-medium leading-tight",
+          isSelected ? "text-white" : "text-zinc-100"
+        )}>
+          {domain}
         </span>
-
-        {/* Amount */}
         {value && (
-          <span className="text-sm font-bold text-emerald-400 tabular-nums shrink-0">
+          <span className={cn("text-[15px] font-bold tabular-nums shrink-0", valueColor)}>
             {value}
           </span>
         )}
       </div>
 
-      {/* Second line: model tags + age */}
-      <div className="flex items-center gap-1.5 mt-1 pl-4 min-w-0">
-        <div className="flex gap-1 min-w-0 overflow-hidden">
-          {offer.models.slice(0, 3).map((m) => (
-            <ModelTag key={m} model={m} />
-          ))}
-          {offer.models.length > 3 && (
-            <span className="text-[10px] text-zinc-600">+{offer.models.length - 3}</span>
-          )}
-        </div>
-        <span className="ml-auto text-[10px] text-zinc-600 shrink-0 tabular-nums">
-          {offer.first_seen_at ? timeAgo(offer.first_seen_at) : ""}
+      {/* line 2: models + source + age */}
+      <div className="flex items-center gap-1.5 mt-1 text-xs min-w-0">
+        <span className="flex-1 min-w-0 truncate text-zinc-400">
+          {offer.models.slice(0, 4).join(" · ")}
+          {offer.models.length > 4 && ` +${offer.models.length - 4}`}
+        </span>
+        <span className="shrink-0 flex items-center gap-1.5 text-zinc-500">
+          {src && <span>{src}</span>}
+          {src && <span className="text-zinc-700">·</span>}
+          <span className="tabular-nums">{offer.first_seen_at ? timeAgo(offer.first_seen_at) : ""}</span>
         </span>
       </div>
     </button>

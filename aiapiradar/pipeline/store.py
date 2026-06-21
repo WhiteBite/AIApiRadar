@@ -17,6 +17,7 @@ from ..core.signal import Signal as RawSignal
 from ..db.base import Database, json_decode, json_encode
 from ..logging_conf import get_logger
 from .classify import Classification
+from .normalize import registrable_domain
 
 log = get_logger("store")
 
@@ -64,19 +65,26 @@ def _dt_parse(s: Optional[str]) -> Optional[dt.datetime]:
 # ─── Internal helpers ─────────────────────────────────────────────────────────
 
 def _get_or_create_service(db: Database, domain: str, clf: Classification) -> int:
+    # Consolidate by registrable domain (eTLD+1): app.base44.com -> base44.com.
+    reg = registrable_domain(domain) or domain
     rows = db.execute(
-        "SELECT id FROM services WHERE canonical_domain = ?", [domain]
+        "SELECT id, aliases FROM services WHERE canonical_domain = ?", [reg]
     )
     if rows:
-        return rows[0]["id"]
+        sid = rows[0]["id"]
+        if domain and domain != reg:
+            aliases = json_decode(rows[0]["aliases"]) or []
+            if domain not in aliases:
+                aliases.append(domain)
+                db.run("UPDATE services SET aliases=? WHERE id=?",
+                       [json_encode(aliases), sid])
+        return sid
+    aliases = [domain] if domain and domain != reg else []
     db.run(
-        "INSERT INTO services (canonical_domain, name, type, models) VALUES (?, ?, ?, ?)",
-        [
-            domain,
-            clf.service_name or domain.split(".")[0],
-            clf.offer_type or "other",
-            json_encode(clf.models or None),
-        ],
+        "INSERT INTO services (canonical_domain, name, type, models, aliases) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [reg, reg, clf.offer_type or "other",
+         json_encode(clf.models or None), json_encode(aliases or None)],
     )
     return db.execute("SELECT last_insert_rowid() AS id")[0]["id"]
 
