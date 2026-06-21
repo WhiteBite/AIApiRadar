@@ -58,6 +58,7 @@ def offer_to_dict(offer: Offer, service: Optional[Service]) -> dict:
         "referral_required": offer.referral_required,
         "effort": offer.effort,
         "unit": offer.unit,
+        "description": offer.description,
         "url": offer.url,
         "score": round(offer.score or 0.0, 4),
         "status": service.status if service else offer.status,

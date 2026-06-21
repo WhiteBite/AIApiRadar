@@ -249,6 +249,13 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
       {/* ── Scroll content ── */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="max-w-2xl space-y-6 px-5 py-5">
+          {/* DESCRIPTION (parsed from the service page) */}
+          {offer.description && (
+            <p className="text-[13px] leading-relaxed text-zinc-300">
+              {offer.description}
+            </p>
+          )}
+
           {/* DENSE FACTS GRID */}
           <dl className="grid grid-cols-2 gap-x-4 gap-y-3.5 sm:grid-cols-3">
             <Fact label="Ценность">

@@ -37,6 +37,7 @@ export interface Offer {
   models: string[];
   claim_steps: string | null;
   requirements: string | null;
+  description: string | null;   // NEW — short blurb parsed from the service page
   referral_required: boolean;
   url: string | null;
   source: string | null;        // NEW — collector that found it (certstream, telegram…)

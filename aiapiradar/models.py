@@ -78,6 +78,7 @@ class Offer(Base):
     referral_required: Mapped[bool] = mapped_column(Boolean, default=False)
     effort: Mapped[Optional[str]] = mapped_column(String(16))
     unit: Mapped[Optional[str]] = mapped_column(String(16))
+    description: Mapped[Optional[str]] = mapped_column(Text)
     url: Mapped[Optional[str]] = mapped_column(String(1024))
     status: Mapped[str] = mapped_column(String(16), default="new")
     score: Mapped[float] = mapped_column(Float, default=0.0)

@@ -25,6 +25,30 @@ from .models import utcnow
 log = get_logger("enrich")
 
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_META_DESC_RE = re.compile(
+    r'<meta[^>]+(?:name|property)\s*=\s*["\'](?:description|og:description)["\'][^>]*'
+    r'content\s*=\s*["\'](.*?)["\']',
+    re.IGNORECASE | re.DOTALL,
+)
+_META_DESC_RE2 = re.compile(
+    r'<meta[^>]+content\s*=\s*["\'](.*?)["\'][^>]*'
+    r'(?:name|property)\s*=\s*["\'](?:description|og:description)["\']',
+    re.IGNORECASE | re.DOTALL,
+)
+_TAG_RE = re.compile(r"<[^>]+>")
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_WS_RE = re.compile(r"\s+")
+
+# Model keyword -> canonical label (for facts parsed off the service page).
+_MODEL_MAP = {
+    "claude": "claude", "opus": "opus", "sonnet": "sonnet", "haiku": "haiku",
+    "gpt-5": "gpt", "gpt-4": "gpt", "gpt4": "gpt", "gpt ": "gpt", "openai": "gpt",
+    "o1": "gpt", "o3": "gpt", "gemini": "gemini", "deepseek": "deepseek",
+    "grok": "grok", "llama": "llama", "qwen": "qwen", "glm": "glm",
+    "mistral": "mistral", "kimi": "kimi",
+}
+_AMOUNT_USD_RE = re.compile(r"\$\s?(\d{1,3}(?:[,\s]?\d{3})*(?:\.\d+)?)")
+_AMOUNT_CREDIT_RE = re.compile(r"(\d{2,6})\s*(?:credits?|刀|额度|points?|баллов)", re.IGNORECASE)
 
 # Open-source relay engines these services are typically built on.
 # Strict markers only (hyphenated names / repo authors / admin-panel titles) to
@@ -56,6 +80,72 @@ class ProbeResult:
     engine: Optional[str] = None
     has_pricing: bool = False
     pricing_triggers: bool = False
+    description: Optional[str] = None      # short blurb for the UI
+    models: list[str] = field(default_factory=list)  # models detected on page
+    amount: Optional[float] = None         # credit/$ amount detected on page
+
+
+def _meta_description(html: str) -> Optional[str]:
+    for rx in (_META_DESC_RE, _META_DESC_RE2):
+        m = rx.search(html or "")
+        if m:
+            txt = _clean_text(m.group(1))
+            if len(txt) > 20:
+                return txt[:300]
+    return None
+
+
+def _clean_text(s: str) -> str:
+    import html as _html
+    return _WS_RE.sub(" ", _html.unescape(s or "")).strip()
+
+
+def _visible_text(html: str, cap: int = 4000) -> str:
+    no_scripts = _SCRIPT_STYLE_RE.sub(" ", html or "")
+    return _clean_text(_TAG_RE.sub(" ", no_scripts))[:cap]
+
+
+def _make_description(html: str) -> Optional[str]:
+    """Prefer meta/og description; fall back to the first real paragraph."""
+    meta = _meta_description(html)
+    if meta:
+        return meta
+    text = _visible_text(html, cap=400)
+    return text[:280] if len(text) > 40 else None
+
+
+def detect_models(text: str) -> list[str]:
+    blob = (text or "").lower()
+    out: list[str] = []
+    for kw, label in _MODEL_MAP.items():
+        if kw in blob and label not in out:
+            out.append(label)
+    return out
+
+
+def detect_amount(text: str) -> Optional[float]:
+    """Largest plausible FREE-credit amount, only when a trigger word sits next
+    to the number (avoids grabbing random page figures like revenue/$80,170)."""
+    t = text or ""
+    low = t.lower()
+    triggers = (
+        "free", "credit", "trial", "bonus", "gift", "voucher", "sign up", "signup",
+        "get $", "claim", "注册送", "免费", "送", "额度", "赠", "бесплатн", "кредит", "триал",
+    )
+    best: Optional[float] = None
+    for rx in (_AMOUNT_USD_RE, _AMOUNT_CREDIT_RE):
+        for m in rx.finditer(t):
+            try:
+                val = float(m.group(1).replace(",", "").replace(" ", ""))
+            except ValueError:
+                continue
+            if not (1 <= val <= 5000):  # free credits are rarely above this
+                continue
+            window = low[max(0, m.start() - 40):m.end() + 40]
+            if any(k in window for k in triggers):
+                if best is None or val > best:
+                    best = val
+    return best
 
 
 def detect_engine(text: str, headers: Optional[dict] = None) -> Optional[str]:
@@ -111,6 +201,7 @@ def reliability_score(alive: bool, has_pricing: bool, engine_known: bool,
 
 async def probe(domain: str, client: httpx.AsyncClient) -> ProbeResult:
     res = ProbeResult()
+    blob = ""
     try:
         r = await client.get(f"https://{domain}/")
         res.status = r.status_code
@@ -118,6 +209,8 @@ async def probe(domain: str, client: httpx.AsyncClient) -> ProbeResult:
         text = r.text if r.status_code < 400 else ""
         res.title = _title(text)
         res.engine = detect_engine(text, dict(r.headers))
+        res.description = _make_description(text)
+        blob += " " + _visible_text(text)
     except Exception:
         log.debug("probe root failed for %s", domain, exc_info=False)
     try:
@@ -126,8 +219,15 @@ async def probe(domain: str, client: httpx.AsyncClient) -> ProbeResult:
             res.has_pricing = True
             low = r.text.lower()
             res.pricing_triggers = any(t in low for t in PRICING_TRIGGERS)
+            blob += " " + _visible_text(r.text)
+            if not res.description:
+                res.description = _make_description(r.text)
     except Exception:
         pass
+    # Facts parsed off the page text (title + body + pricing).
+    fact_blob = f"{res.title or ''} {res.description or ''} {blob}"
+    res.models = detect_models(fact_blob)
+    res.amount = detect_amount(fact_blob)
     return res
 
 
@@ -182,9 +282,33 @@ async def _enrich_service_db(db, service_id: int, client: httpx.AsyncClient) -> 
         "WHERE id=?",
         [status, engine, rel, domain_first_seen, _dt_str(now), service_id],
     )
+
+    # Backfill the service's offers with facts parsed off the page: description
+    # (always refresh if we got one), plus models/amount only when still empty.
+    if p.description or p.models or p.amount is not None:
+        import json as _json
+        offers = db.execute(
+            "SELECT id, amount, models, description FROM offers WHERE service_id=?",
+            [service_id],
+        )
+        for off in offers:
+            sets, args = [], []
+            if p.description:
+                sets.append("description=?")
+                args.append(p.description)
+            if p.models and not off["models"]:
+                sets.append("models=?")
+                args.append(_json.dumps(p.models))
+            if p.amount is not None and not off["amount"]:
+                sets.append("amount=?")
+                args.append(p.amount)
+            if sets:
+                args.append(off["id"])
+                db.run(f"UPDATE offers SET {', '.join(sets)} WHERE id=?", args)
+
     log.info(
-        "enriched %s status=%s engine=%s reliability=%.2f",
-        domain, status, engine, rel,
+        "enriched %s status=%s engine=%s reliability=%.2f models=%s amount=%s",
+        domain, status, engine, rel, p.models, p.amount,
     )
 
 
