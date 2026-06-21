@@ -101,6 +101,63 @@ def cmd_notify(args: argparse.Namespace) -> None:
     log.info("notified %d offers", n)
 
 
+def cmd_reclassify(args: argparse.Namespace) -> None:
+    """Re-classify stored offers with the LLM in BATCHES.
+
+    Inline pipeline classification is heuristic (free, unlimited). This pass
+    upgrades the small set of stored offers using the LLM, batching many
+    offers per request to fit tight free-tier daily quotas (e.g. Gemini
+    free-tier ~20 requests/day → ~5 batched calls covers all offers).
+    """
+    from .db import session_scope
+    from .models import Offer, Service, Signal
+    from .pipeline import normalize
+    from .pipeline.classify import get_classifier
+    from .scorer import rescore_all
+
+    init_db()
+    clf = get_classifier()
+    log.info("reclassify using %s (batch_size=%d)", clf.__class__.__name__, args.batch_size)
+
+    updated = 0
+    with session_scope() as s:
+        offers = s.query(Offer).all()
+        work, items = [], []
+        for o in offers:
+            svc = s.get(Service, o.service_id)
+            if not svc:
+                continue
+            sigs = s.query(Signal).filter(Signal.service_id == svc.id).all()
+            texts = [x.raw_text for x in sigs if x.raw_text]
+            if not texts:
+                continue
+            text = max(texts, key=len)
+            lang = normalize.detect_lang(text)
+            url = o.url or f"https://{svc.canonical_domain}"
+            work.append((o, svc))
+            items.append((text, url, lang, [svc.canonical_domain]))
+
+        log.info("classifying %d offers", len(items))
+        classifications = clf.classify_batch(items, batch_size=args.batch_size)
+
+        for (o, svc), c in zip(work, classifications):
+            if not c.is_offer:
+                continue
+            o.amount = c.amount if c.amount is not None else o.amount
+            o.currency = c.currency or o.currency
+            o.unit = c.unit or o.unit
+            o.effort = c.effort or o.effort
+            o.type = c.offer_type or o.type
+            o.claim_steps = c.claim_steps or o.claim_steps
+            o.requirements = c.requirements or o.requirements
+            if c.models:
+                o.models = c.models
+            o.referral_required = bool(c.referral_required)
+            updated += 1
+        n = rescore_all(s)
+    log.info("reclassified %d offers, rescored %d", updated, n)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aiapiradar")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -125,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_notify = sub.add_parser("notify", help="push fresh high-score offers to Telegram")
     p_notify.add_argument("--limit", type=int, default=20)
     p_notify.set_defaults(func=cmd_notify)
+
+    p_reclassify = sub.add_parser("reclassify", help="LLM-reclassify stored offers in batches (fits free-tier quotas)")
+    p_reclassify.add_argument("--batch-size", type=int, default=15)
+    p_reclassify.set_defaults(func=cmd_reclassify)
     return parser
 
 

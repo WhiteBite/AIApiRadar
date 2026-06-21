@@ -148,21 +148,49 @@ class HeuristicClassifier:
             confidence=min(confidence, 0.95),
         )
 
+    def classify_batch(self, items: list[tuple], batch_size: int = 15) -> list["Classification"]:
+        """Uniform interface with LLMClassifier; just maps classify() per item."""
+        return [self.classify(text, url, lang, domains) for (text, url, lang, domains) in items]
 
-_LLM_SYSTEM = (
-    "You classify messages about FREE AI API credits / trials. "
-    "Return STRICT JSON only, matching this schema: "
+
+_LLM_SCHEMA = (
     '{"is_offer": bool, "service_name": str|null, "offer_type": one of '
     f"{list(OFFER_TYPES)}, "
     '"amount": number|null, "currency": str|null, "models": [str], '
     '"claim_steps": str|null, "requirements": str|null, '
     '"referral_required": bool, '
     '"effort": "easy"|"medium"|"hard", "unit": "usd"|"credits"|"days"|"months"|null, '
-    '"confidence": number 0..1}. '
+    '"confidence": number 0..1}'
+)
+_LLM_RULES = (
     "Rules for effort: easy=just signup with email; medium=need referral/promo code/GitHub star/business email; "
     "hard=requires fake card/VPN/subscription cancellation/automation. "
     "If the message is not about obtaining free/credited AI access, set is_offer=false."
 )
+_LLM_SYSTEM = (
+    "You classify messages about FREE AI API credits / trials. "
+    "Return STRICT JSON only, matching this schema: " + _LLM_SCHEMA + ". " + _LLM_RULES
+)
+_LLM_BATCH_SYSTEM = (
+    "You classify messages about FREE AI API credits / trials. "
+    "You receive a JSON array of items, each with an integer 'id' and a 'text'. "
+    "Return STRICT JSON only of the form "
+    '{"results": [{"id": <same id>, ...fields...}]} '
+    "with exactly one result object per input id (preserve the ids). "
+    "Each result's fields match this schema: " + _LLM_SCHEMA + ". " + _LLM_RULES
+)
+
+
+def _coerce_classification(data: dict) -> Classification:
+    """Validate/normalize a raw LLM dict into a Classification."""
+    if data.get("offer_type") not in OFFER_TYPES:
+        data["offer_type"] = "other"
+    if data.get("effort") not in ("easy", "medium", "hard"):
+        data["effort"] = None
+    if data.get("unit") not in ("usd", "credits", "days", "months"):
+        data["unit"] = None
+    data.pop("id", None)  # strip batch index if present
+    return Classification(**data)
 
 
 class LLMClassifier:
@@ -201,17 +229,77 @@ class LLMClassifier:
                 temperature=0,
             )
             data = json.loads(resp.choices[0].message.content)
-            if data.get("offer_type") not in OFFER_TYPES:
-                data["offer_type"] = "other"
-            # Validate effort / unit — accept only known values, else None
-            if data.get("effort") not in ("easy", "medium", "hard"):
-                data["effort"] = None
-            if data.get("unit") not in ("usd", "credits", "days", "months"):
-                data["unit"] = None
-            return Classification(**data)
+            return _coerce_classification(data)
         except Exception:
             log.exception("LLM classify failed; using heuristic fallback")
             return self._fallback.classify(text, url, lang, domains)
+
+    def classify_batch(self, items: list[tuple], batch_size: int = 15) -> list[Classification]:
+        """Classify many items in few LLM calls to fit tight rate/daily quotas.
+
+        items: list of (text, url, lang, domains) tuples.
+        Returns a Classification per item, in the same order. Items that fail
+        the cheap prefilter are not sent to the LLM (returned as not_offer).
+        Items in a batch that errors fall back to the heuristic classifier.
+        """
+        results: list[Optional[Classification]] = [None] * len(items)
+        # cheap gate: collect indices worth sending
+        pending: list[int] = []
+        for i, (text, _url, _lang, _domains) in enumerate(items):
+            matched, _ = prefilter.match(text)
+            if matched:
+                pending.append(i)
+            else:
+                results[i] = Classification.not_offer()
+
+        for start in range(0, len(pending), batch_size):
+            chunk = pending[start:start + batch_size]
+            payload = []
+            for idx in chunk:
+                text, url, _lang, domains = items[idx]
+                payload.append({
+                    "id": idx,
+                    "url": url or (domains[0] if domains else "unknown"),
+                    "text": text[:3000],
+                })
+            try:
+                client = self._client_lazy()
+                resp = client.chat.completions.create(
+                    model=self.settings.llm_model,
+                    messages=[
+                        {"role": "system", "content": _LLM_BATCH_SYSTEM},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                )
+                data = json.loads(resp.choices[0].message.content)
+                rows = data.get("results", data if isinstance(data, list) else [])
+                by_id: dict[int, dict] = {}
+                for row in rows:
+                    if isinstance(row, dict) and "id" in row:
+                        try:
+                            by_id[int(row["id"])] = row
+                        except (TypeError, ValueError):
+                            continue
+                for idx in chunk:
+                    row = by_id.get(idx)
+                    if row is not None:
+                        try:
+                            results[idx] = _coerce_classification(dict(row))
+                            continue
+                        except Exception:
+                            log.warning("batch row coerce failed for id=%s", idx)
+                    # missing/invalid row -> heuristic fallback
+                    text, url, lang, domains = items[idx]
+                    results[idx] = self._fallback.classify(text, url, lang, domains)
+            except Exception:
+                log.exception("LLM batch classify failed; heuristic fallback for chunk")
+                for idx in chunk:
+                    text, url, lang, domains = items[idx]
+                    results[idx] = self._fallback.classify(text, url, lang, domains)
+
+        return [r if r is not None else Classification.not_offer() for r in results]
 
 
 def get_classifier(settings: Optional[Settings] = None):

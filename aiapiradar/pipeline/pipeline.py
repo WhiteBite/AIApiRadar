@@ -12,14 +12,19 @@ from ..core.signal import Signal as RawSignal
 from ..db import get_db
 from ..logging_conf import get_logger
 from . import normalize, prefilter, store
-from .classify import Classification, get_classifier
+from .classify import Classification, HeuristicClassifier
 
 log = get_logger("pipeline")
 
 
 class Pipeline:
     def __init__(self, classifier=None, min_confidence: float = 0.4):
-        self.classifier = classifier or get_classifier()
+        # Inline classification runs per-signal across the whole collection
+        # stream, so it must be free and quota-free. The heuristic classifier
+        # fits that. The LLM is applied separately as a batched enrichment pass
+        # (see reclassify.py) on the small set of stored offers, which keeps us
+        # within tight free-tier daily request quotas.
+        self.classifier = classifier or HeuristicClassifier()
         self.min_confidence = min_confidence
 
     def process_signals(self, signals: Iterable[RawSignal]) -> dict:
