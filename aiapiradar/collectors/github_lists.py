@@ -53,10 +53,14 @@ def _host(url: str) -> str:
     return (urlparse(url).netloc or "").lower().replace("www.", "")
 
 
-def parse_readme(text: str, source: str) -> list[Signal]:
+def parse_readme(text: str, source: str, repo: str | None = None) -> list[Signal]:
     """Pure: README markdown -> Signals (one per line carrying an outbound link)."""
     out: list[Signal] = []
     seen: set[str] = set()
+    # Use the actual owner/repo path for source_url so the link is valid.
+    # `source` is a stable key (e.g. "ghlist_gptfree") used for dedup and
+    # display; `repo` is the real GitHub path (e.g. "chatanywhere/GPT_API_free").
+    repo_url = f"https://github.com/{repo}" if repo else f"https://github.com/{source}"
     for line in text.splitlines():
         urls = _URL_RE.findall(line)
         if not urls:
@@ -75,7 +79,7 @@ def parse_readme(text: str, source: str) -> list[Signal]:
             source=source,
             raw_text=ctx[:1000],
             url=ext.rstrip(".,);"),
-            source_url=f"https://github.com/{source}",
+            source_url=repo_url,
         ))
     return out
 
@@ -145,7 +149,7 @@ class GitHubListsCollector(Collector):
                         continue
                     content = r.json().get("content", "")
                     text = base64.b64decode(content).decode("utf-8", "replace")
-                    out.extend(parse_readme(text, source))
+                    out.extend(parse_readme(text, source, repo=repo))
                 except Exception:
                     log.warning("github_lists repo failed: %s", repo, exc_info=False)
         log.info("github_lists collected %d links", len(out))
