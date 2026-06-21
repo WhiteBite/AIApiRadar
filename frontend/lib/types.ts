@@ -1,28 +1,13 @@
-// ─── Core types — shared contract for all agents ───────────────────────────
-// These mirror the FastAPI /api/* response shapes.
+// ─── Core types ─────────────────────────────────────────────────────────────
 
 export type OfferType =
-  | "relay"
-  | "saas_trial"
-  | "saas_promo"
-  | "model_release"
-  | "grant"
-  | "abuse"
-  | "other";
+  | "relay" | "saas_trial" | "saas_promo" | "model_release"
+  | "grant" | "abuse" | "other";
 
 export type ServiceStatus = "new" | "active" | "dead" | "unknown";
-
-/** How much effort is required to claim the offer. */
 export type EffortTier = "easy" | "medium" | "hard";
-
-/**
- * Unit of the amount field.
- * usd     → "$200"
- * credits → "5 000cr"
- * days    → "7d trial"
- * months  → "3 months"
- */
 export type AmountUnit = "usd" | "credits" | "days" | "months";
+export type SourceCategory = "forums" | "github" | "telegram" | "youtube" | "producthunt" | "catalogs";
 
 export interface Offer {
   id: number;
@@ -32,16 +17,16 @@ export interface Offer {
   type: OfferType;
   amount: number | null;
   currency: string | null;
-  unit: AmountUnit | null;      // NEW — how to interpret amount
-  effort: EffortTier | null;    // NEW — easy / medium / hard to claim
+  unit: AmountUnit | null;
+  effort: EffortTier | null;
   models: string[];
   claim_steps: string | null;
   requirements: string | null;
-  description: string | null;   // NEW — short blurb parsed from the service page
+  description: string | null;
   referral_required: boolean;
   url: string | null;
-  source: string | null;        // NEW — collector that found it (certstream, telegram…)
-  source_url: string | null;    // NEW — link to the original post/page
+  source: string | null;
+  source_url: string | null;
   score: number;
   status: ServiceStatus;
   reliability: number | null;
@@ -63,7 +48,7 @@ export interface Service {
   engine: string | null;
   status: ServiceStatus;
   reliability: number;
-  aliases: string[];            // NEW — other hosts merged into this entity
+  aliases: string[];
   domain_first_seen: string | null;
   offers: Offer[];
   signals: Signal[];
@@ -72,7 +57,7 @@ export interface Service {
 export interface SourceItem {
   id: number;
   name: string;
-  type: string;                 // "telegram" | "rss" | "collector"
+  type: string;
   enabled: boolean;
   last_run: string | null;
   config: { channel?: string; topic_id?: number } & Record<string, unknown>;
@@ -86,8 +71,8 @@ export interface ModelCount {
 export interface Signal {
   source: string;
   source_url: string | null;
-  channel: string | null;       // NEW — @channel parsed from t.me url
-  raw_text: string | null;      // NEW — original post text
+  channel: string | null;
+  raw_text: string | null;
   observed_at: string | null;
 }
 
@@ -100,7 +85,7 @@ export interface Stats {
   by_effort?: Partial<Record<EffortTier, number>>;
 }
 
-// ─── UI helpers ─────────────────────────────────────────────────────────────
+// ─── Filter types ────────────────────────────────────────────────────────────
 
 export type FeedTab = "all" | "easy" | "medium" | "hard" | "dead" | "saved";
 
@@ -110,10 +95,14 @@ export interface OffersFilters {
   minAmount: number | "";
   model: string;
   sort: "score" | "amount" | "newest";
-  sinceHours: number | "";   // freshness window; "" = all time
+  sinceHours: number | "";
+  // New chip filters
+  sourceCategory: SourceCategory | "";  // client-side grouping
+  offerType: OfferType | "";            // passed to API
+  noReferral: boolean;                  // client-side
+  engine: string;                       // client-side (new-api / one-api / etc.)
 }
 
-// Map tab → API params
 export const TAB_FILTERS: Record<FeedTab, { effort?: string; status?: string }> = {
   all: {},
   easy: { effort: "easy" },
@@ -123,33 +112,63 @@ export const TAB_FILTERS: Record<FeedTab, { effort?: string; status?: string }> 
   saved: {},
 };
 
+/** Sources that belong to each category — for client-side grouping */
+export const SOURCE_CATEGORY_MAP: Record<SourceCategory, string[]> = {
+  forums: [
+    "forum_rss", "nodeseek", "linux.do", "linuxdo", "linuxdo_top", "v2ex", "hostloc",
+    "reddit", "hackernews", "hackernews_ai", "hackernews_show",
+    "bilibili_search_api", "bilibili_search_relay", "zhihu_topic_api",
+    "csdn_search", "juejin_tag_ai", "weibo_search",
+  ],
+  github: ["github", "github_lists", "github_issues", "github_code"],
+  telegram: ["telegram", "telegram_ingest"],
+  youtube: ["youtube"],
+  producthunt: ["producthunt", "betalist"],
+  catalogs: ["directories", "coupon", "openrouter", "packages", "fofa", "leaks",
+    "appsumo", "saasworthy", "futurelist", "uneed"],
+};
+
+export const SOURCE_CATEGORY_LABELS: Record<SourceCategory, string> = {
+  forums: "Форумы",
+  github: "GitHub",
+  telegram: "Telegram",
+  youtube: "YouTube",
+  producthunt: "Launches",
+  catalogs: "Каталоги",
+};
+
+export const OFFER_TYPE_CHIPS: { value: OfferType; label: string }[] = [
+  { value: "relay", label: "Relay" },
+  { value: "saas_trial", label: "Trial" },
+  { value: "saas_promo", label: "Promo" },
+  { value: "grant", label: "Grant" },
+  { value: "abuse", label: "Abuse" },
+];
+
+export const AMOUNT_PRESETS: { value: number | ""; label: string }[] = [
+  { value: "", label: "Любая" },
+  { value: 10, label: "$10+" },
+  { value: 50, label: "$50+" },
+  { value: 100, label: "$100+" },
+  { value: 500, label: "$500+" },
+];
+
+export const ENGINE_CHIPS = ["new-api", "one-api", "sub2api"];
+
 // ─── Display helpers ─────────────────────────────────────────────────────────
 
-/** Format amount+unit into a human-readable string. */
 export function fmtValue(
   amount: number | null,
   unit: AmountUnit | null,
-  currency: string | null
+  currency: string | null,
 ): string {
   if (!amount) return "";
   if (unit === "credits") return `${amount.toLocaleString()}cr`;
   if (unit === "days") return `${amount}d trial`;
   if (unit === "months") return `${amount}mo`;
-  // usd or fallback
   const sym = currency === "USD" || !currency ? "$" : `${currency} `;
   return `${sym}${amount % 1 === 0 ? amount : amount.toFixed(0)}`;
 }
 
-/** Effort tier → human label */
-export const EFFORT_LABELS: Record<EffortTier, string> = {
-  easy: "Easy",
-  medium: "Medium",
-  hard: "Hard",
-};
-
-/** Effort tier → emoji indicator */
-export const EFFORT_EMOJI: Record<EffortTier, string> = {
-  easy: "🟢",
-  medium: "🟡",
-  hard: "🔴",
-};
+export const EFFORT_LABELS: Record<EffortTier, string> = { easy: "Easy", medium: "Medium", hard: "Hard" };
+export const EFFORT_EMOJI: Record<EffortTier, string> = { easy: "🟢", medium: "🟡", hard: "🔴" };
