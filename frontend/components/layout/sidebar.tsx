@@ -4,13 +4,13 @@ import { fetchStats } from "@/lib/api";
 import { NavLink } from "./nav-link";
 
 const SOURCES = [
-  { key: "certstream",  label: "CertStream",  dot: "bg-cyan-400" },
-  { key: "forum_rss",   label: "Forums",       dot: "bg-orange-400" },
-  { key: "github",      label: "GitHub",       dot: "bg-zinc-400" },
-  { key: "directories", label: "Directories",  dot: "bg-lime-400" },
-  { key: "producthunt", label: "ProductHunt",  dot: "bg-red-400" },
-  { key: "coupon",      label: "Coupon",       dot: "bg-purple-400" },
-  { key: "telegram",    label: "Telegram",     dot: "bg-sky-400" },
+  { key: "certstream", label: "CertStream", dot: "bg-cyan-400" },
+  { key: "forum_rss", label: "Forums", dot: "bg-orange-400" },
+  { key: "github", label: "GitHub", dot: "bg-zinc-400" },
+  { key: "directories", label: "Directories", dot: "bg-lime-400" },
+  { key: "producthunt", label: "ProductHunt", dot: "bg-red-400" },
+  { key: "coupon", label: "Coupon", dot: "bg-purple-400" },
+  { key: "telegram", label: "Telegram", dot: "bg-sky-400" },
 ] as const;
 
 export async function Sidebar() {
@@ -39,9 +39,9 @@ export async function Sidebar() {
 
       {/* Navigation */}
       <nav className="px-2 flex flex-col gap-0.5" aria-label="Main navigation">
-        <NavLink href="/"        icon={<Zap        size={14} />} label="Feed"      />
-        <NavLink href="/stats"   icon={<BarChart3   size={14} />} label="Analytics" />
-        <NavLink href="/settings" icon={<Settings    size={14} />} label="Settings"  />
+        <NavLink href="/" icon={<Zap size={14} />} label="Feed" />
+        <NavLink href="/stats" icon={<BarChart3 size={14} />} label="Analytics" />
+        <NavLink href="/settings" icon={<Settings size={14} />} label="Settings" />
       </nav>
 
       {/* Divider */}
@@ -101,9 +101,11 @@ export async function Sidebar() {
       {/* Push version to bottom */}
       <div className="flex-1" />
 
-      {/* Version */}
+      {/* Version — baked in at build time from the root VERSION file */}
       <div className="px-4 py-3 border-t border-zinc-800/50">
-        <p className="text-[11px] text-zinc-600 tabular-nums">v0.1.0</p>
+        <p className="text-[11px] text-zinc-600 tabular-nums">
+          v{process.env.NEXT_PUBLIC_BUILD_VERSION ?? "dev"}
+        </p>
       </div>
     </aside>
   );

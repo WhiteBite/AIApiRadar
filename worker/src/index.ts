@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { VERSION, BUILD_DATE } from './_version'
 
 type Env = {
   DB: D1Database
@@ -327,5 +328,8 @@ app.get('/api/keys', async (c) => {
     .map(([key, unlocks]) => ({ key, present: false, unlocks }))
   return c.json(result)
 })
+
+// GET /api/version — deployed commit SHA and build date
+app.get('/api/version', (c) => c.json({ version: VERSION, build_date: BUILD_DATE }))
 
 export default app
