@@ -42,6 +42,10 @@ def cmd_run(_: argparse.Namespace) -> None:
 def cmd_collect_once(_: argparse.Namespace) -> None:
     """Run all collectors once — used by GitHub Actions / Cloudflare cron.
 
+    Collectors run CONCURRENTLY (network I/O is the bottleneck) with a per-
+    collector timeout so one slow source (e.g. crt.sh) can't stall the run.
+    Their signals are then pipelined sequentially (DB writes stay serial).
+
     Skips realtime stream/ingest collectors (certstream WebSocket, telegram
     Telethon) which are meant for the long-running scheduler. CT-log coverage
     in one-shot mode is provided by the `crtsh` HTTP-poll collector instead.
@@ -49,21 +53,32 @@ def cmd_collect_once(_: argparse.Namespace) -> None:
     from .pipeline import async_pipeline
 
     skip = {"certstream", "telegram"}
+    per_collector_timeout = 120.0
     load_builtin()
     init_db()
 
     async def run() -> None:
         registry = get_registry()
-        for name, cls in registry.items():
-            if name in skip:
-                continue
+        names = [n for n in registry if n not in skip]
+
+        async def _collect(name: str):
             try:
-                collector = cls()
-                signals = list(await collector.collect())
-                await async_pipeline(signals)
+                collector = registry[name]()
+                signals = list(await asyncio.wait_for(
+                    collector.collect(), timeout=per_collector_timeout))
                 log.info("collector %s: %d signals", name, len(signals))
+                return signals
+            except asyncio.TimeoutError:
+                log.warning("collector %s timed out (%.0fs)", name, per_collector_timeout)
+                return []
             except Exception:
                 log.exception("collector %s failed", name)
+                return []
+
+        results = await asyncio.gather(*[_collect(n) for n in names])
+        all_signals = [s for batch in results for s in batch]
+        await async_pipeline(all_signals)
+        log.info("collect-once: %d signals from %d collectors", len(all_signals), len(names))
 
     asyncio.run(run())
 

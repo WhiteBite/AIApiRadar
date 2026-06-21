@@ -64,6 +64,22 @@ BLOCKED_DOMAINS = frozenset({
     "npmjs.com",
     "pypi.org",
     "huggingface.co",
+    # Page / app / docs hosts — a bare registrable domain here is never a real
+    # AI service (it's someone's GitHub Pages / Vercel / docs site).
+    "github.io",
+    "gitbook.io",
+    "gitbook.com",
+    "readthedocs.io",
+    "readthedocs.org",
+    "netlify.app",
+    "vercel.app",
+    "pages.dev",
+    "web.app",
+    "firebaseapp.com",
+    "herokuapp.com",
+    "surge.sh",
+    "glitch.me",
+    "repl.co",
 })
 
 

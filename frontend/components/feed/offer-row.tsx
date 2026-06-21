@@ -1,6 +1,6 @@
 "use client";
 
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, timeAgo, isWithinHours } from "@/lib/utils";
 import { fmtValue } from "@/lib/types";
 import type { Offer } from "@/lib/types";
 
@@ -31,6 +31,7 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
       : offer.unit === "days" || offer.unit === "months" ? "text-blue-400"
         : "text-emerald-400";
   const src = offer.source ? (SOURCE_SHORT[offer.source] ?? offer.source) : null;
+  const isNew = isWithinHours(offer.first_seen_at, 24);
   const accent = isSelected
     ? "border-l-blue-500"
     : (offer.effort ? EFFORT_BORDER[offer.effort] : "border-l-transparent") ?? "border-l-transparent";
@@ -47,6 +48,11 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
     >
       {/* line 1: domain + value */}
       <div className="flex items-baseline gap-2 min-w-0">
+        {isNew && (
+          <span className="shrink-0 self-center rounded-sm bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-1 py-px text-[9px] font-bold uppercase tracking-wide leading-none">
+            new
+          </span>
+        )}
         <span className={cn(
           "flex-1 min-w-0 truncate text-[15px] font-medium leading-tight",
           isSelected ? "text-white" : "text-zinc-100"
@@ -63,8 +69,14 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
       {/* line 2: models + source + age */}
       <div className="flex items-center gap-1.5 mt-1 text-xs min-w-0">
         <span className="flex-1 min-w-0 truncate text-zinc-400">
-          {offer.models.slice(0, 4).join(" · ")}
-          {offer.models.length > 4 && ` +${offer.models.length - 4}`}
+          {offer.models.length > 0 ? (
+            <>
+              {offer.models.slice(0, 4).join(" · ")}
+              {offer.models.length > 4 && ` +${offer.models.length - 4}`}
+            </>
+          ) : (
+            <span className="text-zinc-600">—</span>
+          )}
         </span>
         <span className="shrink-0 flex items-center gap-1.5 text-zinc-500">
           {src && <span>{src}</span>}
