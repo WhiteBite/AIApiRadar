@@ -54,7 +54,9 @@ jobs:
 
       - name: Install frontend deps
         working-directory: frontend
-        run: npm ci
+        # npm install (not ci): the Windows-generated lockfile omits Linux-only
+        # optional deps (@emnapi/*), which makes `npm ci` fail on the runner.
+        run: npm install --no-audit --no-fund
 
       - name: Build static export
         working-directory: frontend
