@@ -9,7 +9,7 @@ const app = new Hono<{ Bindings: Env }>()
 
 // CORS for the Next.js frontend (Cloudflare Pages)
 app.use('*', cors({
-  origin: ['https://aiapiradar.pages.dev', 'http://localhost:3000'],
+  origin: ['https://aiapiradar.cf.whitebite.ru', 'https://aiapiradar.pages.dev', 'http://localhost:3000'],
   allowMethods: ['GET'],
 }))
 
@@ -124,10 +124,10 @@ app.get('/api/services/:id', async (c) => {
 // GET /api/stats
 app.get('/api/stats', async (c) => {
   const [services, active, dead, offers, byType] = await Promise.all([
-    c.env.DB.prepare('SELECT COUNT(*) as n FROM services').first<{n: number}>(),
-    c.env.DB.prepare("SELECT COUNT(*) as n FROM services WHERE status='active'").first<{n: number}>(),
-    c.env.DB.prepare("SELECT COUNT(*) as n FROM services WHERE status='dead'").first<{n: number}>(),
-    c.env.DB.prepare('SELECT COUNT(*) as n FROM offers').first<{n: number}>(),
+    c.env.DB.prepare('SELECT COUNT(*) as n FROM services').first<{ n: number }>(),
+    c.env.DB.prepare("SELECT COUNT(*) as n FROM services WHERE status='active'").first<{ n: number }>(),
+    c.env.DB.prepare("SELECT COUNT(*) as n FROM services WHERE status='dead'").first<{ n: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) as n FROM offers').first<{ n: number }>(),
     c.env.DB.prepare('SELECT type, COUNT(*) as n FROM offers GROUP BY type').all(),
   ])
 

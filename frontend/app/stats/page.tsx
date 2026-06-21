@@ -1,4 +1,7 @@
-import { fetchStats } from "@/lib/api";
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { fetchStats, apiKeys } from "@/lib/api";
 import { Header } from "@/components/layout/header";
 import { TYPE_COLORS, TYPE_LABELS, SOURCE_COLORS } from "@/lib/colors";
 import { cn } from "@/lib/utils";
@@ -79,14 +82,13 @@ function SourceRow({ source }: { source: { key: string; label: string } }) {
   );
 }
 
-// ─── Page (server component) ──────────────────────────────────────────────────
-export default async function StatsPage() {
-  let stats: Awaited<ReturnType<typeof fetchStats>> | null = null;
-  try {
-    stats = await fetchStats();
-  } catch {
-    // backend unavailable
-  }
+// ─── Page (client component) ──────────────────────────────────────────────────
+export default function StatsPage() {
+  const { data: stats } = useQuery({
+    queryKey: apiKeys.stats(),
+    queryFn: () => fetchStats(),
+    staleTime: 30_000,
+  });
 
   const byType = stats?.by_type ?? {};
   const maxCount = Math.max(1, ...Object.values(byType).map(Number));

@@ -1,8 +1,14 @@
 import type { NextConfig } from "next";
 
+// Set NEXT_EXPORT=true for the Cloudflare Pages build (static export, no Node server).
+// In dev we keep the rewrite proxy so the client can call relative /api/* without CORS.
+const isExport = process.env.NEXT_EXPORT === "true";
+
 const nextConfig: NextConfig = {
-  // Proxy /api/* to FastAPI backend in dev
+  ...(isExport ? { output: "export" } : {}),
+  images: { unoptimized: true },
   async rewrites() {
+    if (isExport) return [];
     return [
       {
         source: "/api/:path*",

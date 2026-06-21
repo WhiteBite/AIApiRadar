@@ -39,3 +39,13 @@ desktop.ini
 .idea/
 *.suo
 *.user
+
+# ── Node / Next.js / frontend ────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# ── Cloudflare / wrangler ────────────────────────────────────────────────────
+.wrangler/
+.dev.vars

@@ -5,9 +5,12 @@ import type { Offer, OffersResponse, Service, Stats, SourceItem, ModelCount } fr
 // without any CORS issues.
 function resolveUrl(path: string, params?: Record<string, string | number | boolean | undefined>): string {
   const isServer = typeof window === "undefined";
+  // Client: use absolute API URL in production (static export, no rewrite proxy);
+  // empty in dev so relative paths hit the Next.js rewrite proxy (no CORS).
+  // Server (dev SSR): absolute backend URL.
   const base = isServer
     ? (process.env.API_URL ?? "http://127.0.0.1:8000")
-    : "";
+    : (process.env.NEXT_PUBLIC_API_URL ?? "");
 
   // Build query string
   const qs = params
@@ -63,7 +66,9 @@ export async function fetchSources(type?: string): Promise<{ items: SourceItem[]
 }
 
 async function mutate<T>(path: string, method: string, body?: unknown): Promise<T> {
-  const base = typeof window === "undefined" ? (process.env.API_URL ?? "http://127.0.0.1:8000") : "";
+  const base = typeof window === "undefined"
+    ? (process.env.API_URL ?? "http://127.0.0.1:8000")
+    : (process.env.NEXT_PUBLIC_API_URL ?? "");
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { "Content-Type": "application/json" },

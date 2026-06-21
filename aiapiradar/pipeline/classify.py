@@ -200,6 +200,9 @@ class LLMClassifier:
         self.settings = settings or get_settings()
         self._fallback = HeuristicClassifier()
         self._client = None
+        # models to try, in order; ones that hit a daily quota get parked here
+        self._models = list(self.settings.llm_model_chain)
+        self._exhausted: set[str] = set()
 
     def _client_lazy(self):
         if self._client is None:
@@ -211,24 +214,57 @@ class LLMClassifier:
             )
         return self._client
 
+    def _live_models(self) -> list[str]:
+        live = [m for m in self._models if m not in self._exhausted]
+        return live or list(self._models)  # if all parked, retry from scratch
+
+    @staticmethod
+    def _is_quota_error(exc: Exception) -> bool:
+        from openai import RateLimitError
+
+        if isinstance(exc, RateLimitError):
+            return True
+        msg = str(exc).lower()
+        return "429" in msg or "quota" in msg or "resource_exhausted" in msg
+
+    def _complete(self, system: str, user: str) -> str:
+        """Run one chat completion, rotating models when one hits its quota.
+
+        Returns the raw JSON string content. Raises if every model is
+        exhausted so the caller can fall back to the heuristic.
+        """
+        client = self._client_lazy()
+        last_exc: Optional[Exception] = None
+        for model in self._live_models():
+            try:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                )
+                return resp.choices[0].message.content
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if self._is_quota_error(exc):
+                    self._exhausted.add(model)
+                    log.warning("model %s hit quota/429; rotating to next", model)
+                    continue
+                raise
+        raise last_exc or RuntimeError("no LLM models available")
+
     def classify(self, text: str, url: Optional[str], lang: str, domains: list[str]) -> Classification:
         # cheap gate first: don't spend tokens on obvious noise
         matched, _ = prefilter.match(text)
         if not matched:
             return Classification.not_offer()
         try:
-            client = self._client_lazy()
             user = f"URL: {url or (domains[0] if domains else 'unknown')}\nTEXT:\n{text[:4000]}"
-            resp = client.chat.completions.create(
-                model=self.settings.llm_model,
-                messages=[
-                    {"role": "system", "content": _LLM_SYSTEM},
-                    {"role": "user", "content": user},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0,
-            )
-            data = json.loads(resp.choices[0].message.content)
+            content = self._complete(_LLM_SYSTEM, user)
+            data = json.loads(content)
             return _coerce_classification(data)
         except Exception:
             log.exception("LLM classify failed; using heuristic fallback")
@@ -240,7 +276,8 @@ class LLMClassifier:
         items: list of (text, url, lang, domains) tuples.
         Returns a Classification per item, in the same order. Items that fail
         the cheap prefilter are not sent to the LLM (returned as not_offer).
-        Items in a batch that errors fall back to the heuristic classifier.
+        On quota errors the model rotates; if all models are exhausted (or a
+        batch errors) the affected items fall back to the heuristic classifier.
         """
         results: list[Optional[Classification]] = [None] * len(items)
         # cheap gate: collect indices worth sending
@@ -263,17 +300,10 @@ class LLMClassifier:
                     "text": text[:3000],
                 })
             try:
-                client = self._client_lazy()
-                resp = client.chat.completions.create(
-                    model=self.settings.llm_model,
-                    messages=[
-                        {"role": "system", "content": _LLM_BATCH_SYSTEM},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0,
+                content = self._complete(
+                    _LLM_BATCH_SYSTEM, json.dumps(payload, ensure_ascii=False)
                 )
-                data = json.loads(resp.choices[0].message.content)
+                data = json.loads(content)
                 rows = data.get("results", data if isinstance(data, list) else [])
                 by_id: dict[int, dict] = {}
                 for row in rows:

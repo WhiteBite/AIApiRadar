@@ -2,11 +2,16 @@ name = "aiapiradar-api"
 main = "worker/src/index.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+routes = [
+  { pattern = "api.aiapiradar.cf.whitebite.ru", custom_domain = true }
+]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "aiapiradar"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "d20581cd-2613-4d3e-ac75-d24aaea1ae59"
 
 [vars]
 ENVIRONMENT = "production"

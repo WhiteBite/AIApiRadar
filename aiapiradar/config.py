@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
     llm_api_key: str = ""
+    # Comma-separated models tried in order when the primary hits a 429/quota.
+    # Each Gemini free-tier model has its OWN daily quota, so rotating across
+    # them multiplies effective daily capacity.
+    llm_fallback_models: str = ""
 
     # Collector API keys (optional; collectors degrade gracefully if absent)
     github_token: str = ""
@@ -65,6 +69,16 @@ class Settings(BaseSettings):
     @property
     def has_llm(self) -> bool:
         return bool(self.llm_api_key)
+
+    @property
+    def llm_model_chain(self) -> list[str]:
+        """Primary model first, then any fallbacks (deduped, order preserved)."""
+        chain = [self.llm_model]
+        for m in self.llm_fallback_models.split(","):
+            m = m.strip()
+            if m and m not in chain:
+                chain.append(m)
+        return chain
 
     @property
     def is_cloudflare(self) -> bool:
