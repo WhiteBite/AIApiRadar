@@ -45,6 +45,7 @@ jobs:
         run: |
           python -m aiapiradar.cli init-db
           python -m aiapiradar.cli collect-once
+          python -m aiapiradar.cli purge-blocked
           python -m aiapiradar.cli enrich --limit 15 --stale-hours 12
           python -m aiapiradar.cli score
 

@@ -158,6 +158,44 @@ def cmd_reclassify(args: argparse.Namespace) -> None:
     log.info("reclassified %d offers, rescored %d", updated, n)
 
 
+def cmd_purge_blocked(_: argparse.Namespace) -> None:
+    """Delete already-stored Services (and dependent rows) whose canonical
+    domain is blocked — cleans data polluted before the blocklist existed.
+
+    Removes, per blocked service: its lead_metrics (via offers), offers, and
+    signals, then the service row itself. Order respects FK dependencies.
+    """
+    from .db import get_db, init_db
+    from .pipeline.normalize import is_blocked_domain
+
+    init_db()
+    purged_services = 0
+    purged_offers = 0
+    purged_signals = 0
+    with get_db() as db:
+        services = db.execute("SELECT id, canonical_domain FROM services")
+        blocked = [r for r in services if is_blocked_domain(r["canonical_domain"])]
+        for svc in blocked:
+            sid = svc["id"]
+            offer_rows = db.execute("SELECT id FROM offers WHERE service_id = ?", [sid])
+            offer_ids = [o["id"] for o in offer_rows]
+            for oid in offer_ids:
+                db.run("DELETE FROM lead_metrics WHERE offer_id = ?", [oid])
+            sig_rows = db.execute("SELECT id FROM signals WHERE service_id = ?", [sid])
+            purged_signals += len(sig_rows)
+            db.run("DELETE FROM signals WHERE service_id = ?", [sid])
+            db.run("DELETE FROM offers WHERE service_id = ?", [sid])
+            db.run("DELETE FROM services WHERE id = ?", [sid])
+            purged_offers += len(offer_ids)
+            purged_services += 1
+            log.info("purged blocked service %s (id=%d)", svc["canonical_domain"], sid)
+        db.commit()
+    log.info(
+        "purge-blocked: removed %d services, %d offers, %d signals",
+        purged_services, purged_offers, purged_signals,
+    )
+
+
 def cmd_dump_sql(args: argparse.Namespace) -> None:
     """Export all tables as DELETE + INSERT statements for a D1 reseed.
 
@@ -209,6 +247,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_enrich.set_defaults(func=cmd_enrich)
 
     sub.add_parser("score", help="recompute offer scores").set_defaults(func=cmd_score)
+
+    sub.add_parser(
+        "purge-blocked",
+        help="delete stored services on blocklisted domains (clean polluted data)",
+    ).set_defaults(func=cmd_purge_blocked)
 
     p_serve = sub.add_parser("serve", help="run the web dashboard + API")
     p_serve.add_argument("--host", default="127.0.0.1")

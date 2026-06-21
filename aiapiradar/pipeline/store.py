@@ -17,7 +17,7 @@ from ..core.signal import Signal as RawSignal
 from ..db.base import Database, json_decode, json_encode
 from ..logging_conf import get_logger
 from .classify import Classification
-from .normalize import registrable_domain
+from .normalize import is_blocked_domain, registrable_domain
 
 log = get_logger("store")
 
@@ -223,6 +223,14 @@ def persist(
         if dups:
             stats["dup"] = 1
             return stats
+
+    # Anti-noise: platform/aggregator/social/dev-host domains must never become
+    # a Service/offer. Drop the signal entirely (logged), EXCEPT HuggingFace
+    # model releases, which are keyed by a pseudo hf/<org> service below.
+    if domains and is_blocked_domain(domains[0]) and not raw.meta.get("model_release"):
+        log.debug("dropping blocked-domain signal: %s (source=%s)", domains[0], raw.source)
+        stats["blocked"] = 1
+        return stats
 
     service_id: Optional[int] = None
     offer_id: Optional[int] = None

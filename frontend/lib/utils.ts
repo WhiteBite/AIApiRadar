@@ -5,15 +5,24 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-/** Format relative time: "3h ago", "2d ago" */
+/** Relative time in Russian: "только что", "5 мин назад", "3 ч назад", "2 дн назад" */
 export function timeAgo(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   const sec = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-  return `${Math.floor(sec / 86400)}d ago`;
+  if (!Number.isFinite(sec) || sec < 0) return "только что";
+  if (sec < 60) return "только что";
+  if (sec < 3600) return `${Math.floor(sec / 60)} мин назад`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} ч назад`;
+  return `${Math.floor(sec / 86400)} дн назад`;
+}
+
+/** True if the ISO timestamp is within the last `hours` hours. */
+export function isWithinHours(iso: string | null, hours: number): boolean {
+  if (!iso) return false;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return false;
+  return Date.now() - t < hours * 3.6e6;
 }
 
 /** Format a lead-time delta in hours into a human string */

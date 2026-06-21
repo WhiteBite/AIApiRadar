@@ -20,6 +20,62 @@ _SKIP_HOSTS = {
     "drive.google.com", "tinyurl.com", "bit.ly",
 }
 
+# Registrable domains that must NEVER become a Service/offer. These are
+# platforms, aggregators, social networks, link shorteners and dev hosts that
+# collectors (reddit, hackernews, github_lists, ...) emit as the *source* of a
+# signal — the extracted domain is the platform itself, not a real AI service.
+# NOTE: cloud providers (google.com, amazon.com, microsoft.com) are kept OUT
+# on purpose — they are legit seeded services. HuggingFace (huggingface.co) is
+# listed here so a bare service is never created, but model releases are
+# preserved at the persistence layer via signal meta["model_release"].
+BLOCKED_DOMAINS = frozenset({
+    "reddit.com",
+    "github.com",
+    "githubusercontent.com",
+    "x.com",
+    "twitter.com",
+    "youtube.com",
+    "youtu.be",
+    "medium.com",
+    "t.me",
+    "telegram.me",
+    "telegram.org",
+    "facebook.com",
+    "fb.com",
+    "linkedin.com",
+    "instagram.com",
+    "tiktok.com",
+    "news.ycombinator.com",
+    "ycombinator.com",
+    "discord.com",
+    "discord.gg",
+    "stackoverflow.com",
+    "quora.com",
+    "wikipedia.org",
+    "archive.org",
+    "bit.ly",
+    "goo.gl",
+    "notion.so",
+    "substack.com",
+    "wordpress.com",
+    "blogspot.com",
+    "gitlab.com",
+    "bitbucket.org",
+    "npmjs.com",
+    "pypi.org",
+    "huggingface.co",
+})
+
+
+def is_blocked_domain(domain: str | None) -> bool:
+    """True if the registrable domain is a non-service platform/aggregator.
+
+    Subdomains resolve via registrable_domain(), so old.reddit.com and
+    www.reddit.com both collapse to reddit.com and are blocked.
+    """
+    reg = registrable_domain(domain)
+    return bool(reg) and reg in BLOCKED_DOMAINS
+
 
 def detect_lang(text: str) -> str:
     if not text:

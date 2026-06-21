@@ -1,24 +1,28 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUpRight, Radio, Star } from "lucide-react";
-import { cn, timeAgo } from "@/lib/utils";
-import { fmtValue } from "@/lib/types";
-import type { Offer, Signal } from "@/lib/types";
+import { ArrowLeft, ArrowUpRight, ExternalLink, Radio, Star } from "lucide-react";
+import { cn, timeAgo, isWithinHours, scorePct } from "@/lib/utils";
+import { fmtValue, EFFORT_LABELS, EFFORT_EMOJI } from "@/lib/types";
+import type { Offer, Signal, ServiceStatus } from "@/lib/types";
 import { fetchService, apiKeys } from "@/lib/api";
 import { useSaved } from "@/lib/saved";
-import { EffortBadge } from "@/components/ui/effort-badge";
 import { TypeBadge } from "@/components/ui/type-badge";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { ModelTag } from "@/components/ui/model-tag";
 import { SourceBadge } from "@/components/ui/source-badge";
-import { RequirementIcons } from "@/components/ui/requirement-icons";
-import { LeadBadge } from "@/components/ui/lead-badge";
+import { STATUS_DOT, EFFORT_COLORS } from "@/lib/colors";
 
 export interface OfferDetailProps {
   offer: Offer;
   onClose?: () => void;
 }
+
+const STATUS_LABELS_RU: Record<ServiceStatus, string> = {
+  active: "Активен",
+  dead: "Мёртв",
+  new: "Новый",
+  unknown: "Неизвестно",
+};
 
 function valueColor(unit: Offer["unit"]): string {
   if (unit === "credits") return "text-amber-400";
@@ -26,6 +30,11 @@ function valueColor(unit: Offer["unit"]): string {
   return "text-emerald-400";
 }
 
+function isHttp(url: string | null): url is string {
+  return !!url && url.startsWith("http");
+}
+
+/** Break a claim_steps blob into individual steps. */
 function parseClaimSteps(s: string): string[] {
   return s
     .split(/\n|(?=\d+[.)]\s)|●|•|▪/)
@@ -33,50 +42,66 @@ function parseClaimSteps(s: string): string[] {
     .filter((x) => x.length > 2);
 }
 
-function Section({ title, right, children }: {
-  title: string; right?: React.ReactNode; children: React.ReactNode;
+// ── Small building blocks ───────────────────────────────────────────────────
+
+function Section({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count?: number;
+  children: React.ReactNode;
 }) {
   return (
     <section>
-      <div className="flex items-center justify-between mb-2.5">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">{title}</h3>
-        {right}
-      </div>
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+        {title}
+        {count !== undefined && (
+          <span className="ml-1.5 text-zinc-600 tabular-nums">{count}</span>
+        )}
+      </h3>
       {children}
     </section>
   );
 }
 
-function isHttp(url: string | null): url is string {
-  return !!url && url.startsWith("http");
+/** One label/value cell in the dense facts grid. */
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] uppercase tracking-wide text-zinc-600">{label}</dt>
+      <dd className="mt-0.5 text-[13px] text-zinc-200">{children}</dd>
+    </div>
+  );
 }
 
-/** One source card in the "Откуда" list. */
-function SourceItem({ sig }: { sig: Signal }) {
-  const label = sig.channel ?? null;
+function Dash() {
+  return <span className="text-zinc-600">—</span>;
+}
+
+/** Compact source/provenance row. */
+function SourceRow({ sig }: { sig: Signal }) {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800/70">
-        <SourceBadge source={sig.source} />
-        {label && <span className="text-xs text-zinc-300 truncate">{label}</span>}
-        {sig.observed_at && (
-          <span className="text-xs text-zinc-500 shrink-0">{timeAgo(sig.observed_at)}</span>
-        )}
-        {isHttp(sig.source_url) && (
-          <a
-            href={sig.source_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-0.5 text-xs text-zinc-400 hover:text-white shrink-0"
-          >
-            оригинал <ArrowUpRight className="w-3 h-3" />
-          </a>
-        )}
-      </div>
-      {sig.raw_text && (
-        <p className="px-3 py-2.5 text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap max-h-56 overflow-y-auto">
-          {sig.raw_text}
-        </p>
+    <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/50 px-2.5 py-1.5">
+      <SourceBadge source={sig.source} />
+      {sig.channel && (
+        <span className="truncate text-xs text-zinc-400">{sig.channel}</span>
+      )}
+      {sig.observed_at && (
+        <span className="shrink-0 text-[11px] text-zinc-600 tabular-nums">
+          {timeAgo(sig.observed_at)}
+        </span>
+      )}
+      {isHttp(sig.source_url) && (
+        <a
+          href={sig.source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-xs text-zinc-400 hover:text-zinc-100"
+        >
+          оригинал <ArrowUpRight className="h-3 w-3" />
+        </a>
       )}
     </div>
   );
@@ -90,137 +115,267 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
   });
   const { isSaved, toggle } = useSaved();
 
-  const domain = offer.domain ?? offer.name ?? "Unknown";
+  const domain = offer.domain ?? offer.name ?? "Без названия";
   const value = fmtValue(offer.amount, offer.unit, offer.currency);
-  const steps = offer.claim_steps ? parseClaimSteps(offer.claim_steps) : [];
-  const aliases = service?.aliases ?? [];
   const saved = isSaved(offer.id);
+  const aliases = service?.aliases ?? [];
 
-  // All sources, richest text first; real links float to top.
-  const signals = (service?.signals ?? [])
+  const status = offer.status;
+  const statusDot = STATUS_DOT[status] ?? "bg-zinc-500";
+
+  const effort = offer.effort;
+  const reliability = offer.reliability ?? service?.reliability ?? null;
+  const relPct = reliability !== null ? scorePct(reliability) : null;
+  const engine = offer.engine ?? service?.engine ?? null;
+  const isNew = isWithinHours(offer.first_seen_at, 24);
+
+  // Sources: dedup by source_url (fall back to source+text for link-less ones),
+  // richest text & real links float to the top.
+  const allSignals = service?.signals ?? [];
+  const seen = new Set<string>();
+  const signals = allSignals
     .slice()
     .sort((a, b) => {
       const linkA = isHttp(a.source_url) ? 1 : 0;
       const linkB = isHttp(b.source_url) ? 1 : 0;
       if (linkA !== linkB) return linkB - linkA;
       return (b.raw_text?.length ?? 0) - (a.raw_text?.length ?? 0);
+    })
+    .filter((s) => {
+      const key = s.source_url ?? `${s.source}:${s.raw_text ?? ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
 
-  let leadHours: number | null = null;
-  if (offer.domain_first_seen && offer.first_seen_at) {
-    const d = (Date.parse(offer.first_seen_at) - Date.parse(offer.domain_first_seen)) / 3.6e6;
-    leadHours = d > 0 ? d : null;
-  }
+  const steps = offer.claim_steps ? parseClaimSteps(offer.claim_steps) : [];
+  // Fallback for "Как получить": the most informative source text.
+  const richest = allSignals.reduce<Signal | null>((best, s) => {
+    if (!s.raw_text) return best;
+    if (!best || (s.raw_text.length > (best.raw_text?.length ?? 0))) return s;
+    return best;
+  }, null);
+
+  const requirements = offer.requirements?.trim();
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden">
-      {/* ── HERO ── */}
-      <div className="shrink-0 px-6 pt-5 pb-5 border-b border-zinc-800 bg-zinc-900">
-        <div className="flex items-start gap-3">
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50">
+      {/* ── COMPACT HERO ── */}
+      <div className="shrink-0 border-b border-zinc-800 bg-zinc-900 px-5 py-4">
+        <div className="flex items-start gap-2.5">
           {onClose && (
-            <button onClick={onClose} className="md:hidden mt-1 text-zinc-500 hover:text-zinc-300">
-              <ArrowLeft className="w-5 h-5" />
+            <button
+              onClick={onClose}
+              className="mt-0.5 text-zinc-500 hover:text-zinc-300 md:hidden"
+              aria-label="Назад"
+            >
+              <ArrowLeft className="h-5 w-5" />
             </button>
           )}
-          <h2 className="flex-1 min-w-0 truncate text-2xl font-semibold text-white leading-tight">
-            {domain}
-          </h2>
-          <div className="flex items-center gap-1.5 shrink-0 pt-1">
-            <EffortBadge effort={offer.effort} variant="pill" />
-            <TypeBadge type={offer.type} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h2 className="truncate text-lg font-semibold leading-tight text-zinc-100">
+                {domain}
+              </h2>
+              <TypeBadge type={offer.type} />
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {value && (
+                <span
+                  className={cn(
+                    "text-xl font-bold leading-none tabular-nums",
+                    valueColor(offer.unit)
+                  )}
+                >
+                  {value}
+                </span>
+              )}
+              <span className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
+                <span className={cn("h-1.5 w-1.5 rounded-full", statusDot)} />
+                {STATUS_LABELS_RU[status]}
+              </span>
+              {isNew && (
+                <span className="rounded border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
+                  new
+                </span>
+              )}
+            </div>
+            {aliases.length > 0 && (
+              <p className="mt-1 truncate text-xs text-zinc-600">
+                также: {aliases.join(", ")}
+              </p>
+            )}
           </div>
         </div>
 
-        {aliases.length > 0 && (
-          <p className="mt-1 text-xs text-zinc-500 truncate">также: {aliases.join(", ")}</p>
-        )}
-
-        <div className="flex items-center gap-3 mt-3 flex-wrap">
-          {value && (
-            <span className={cn("text-3xl font-bold tabular-nums leading-none", valueColor(offer.unit))}>
-              {value}
-            </span>
-          )}
-          <div className="flex flex-wrap gap-1.5">
-            {offer.models.map((m) => <ModelTag key={m} model={m} />)}
-          </div>
-        </div>
-
-        {/* CTA row */}
-        <div className="flex items-center gap-2 mt-4">
-          {offer.url && (
+        {/* CTA row — normal-sized button, not a slab */}
+        <div className="mt-3.5 flex flex-wrap items-center gap-2">
+          {isHttp(offer.url) && (
             <a
               href={offer.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-100 hover:bg-white text-zinc-900 text-sm font-semibold transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-600 bg-zinc-800 px-3.5 py-1.5 text-sm font-medium text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-700"
             >
-              Открыть сайт <ArrowUpRight className="w-4 h-4" />
+              Открыть →
             </a>
           )}
           <button
             onClick={() => toggle(offer.id)}
             title={saved ? "Убрать из сохранённых" : "Сохранить"}
             className={cn(
-              "flex items-center justify-center px-3.5 py-2.5 rounded-lg border transition-colors",
+              "inline-flex items-center justify-center rounded-md border px-2.5 py-1.5 transition-colors",
               saved
-                ? "bg-amber-500/15 text-amber-300 border-amber-500/40"
-                : "border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
+                ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
+                : "border-zinc-700 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             )}
           >
-            <Star className={cn("w-4 h-4", saved && "fill-amber-300")} />
+            <Star className={cn("h-4 w-4", saved && "fill-amber-300")} />
           </button>
-          <div className="ml-1 shrink-0">
-            <StatusBadge status={offer.status} />
-          </div>
+          {isHttp(offer.source_url) && (
+            <a
+              href={offer.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Открыть оригинал
+            </a>
+          )}
         </div>
       </div>
 
       {/* ── Scroll content ── */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl px-6 py-6 space-y-7">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="max-w-2xl space-y-6 px-5 py-5">
+          {/* DENSE FACTS GRID */}
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3.5 sm:grid-cols-3">
+            <Fact label="Ценность">
+              {value ? (
+                <span className={cn("font-semibold tabular-nums", valueColor(offer.unit))}>
+                  {value}
+                </span>
+              ) : (
+                <Dash />
+              )}
+            </Fact>
 
-          {/* Как получить */}
+            <Fact label="Усилие">
+              {effort ? (
+                <span className={cn("inline-flex items-center gap-1.5 font-medium", EFFORT_COLORS[effort])}>
+                  <span aria-hidden="true">{EFFORT_EMOJI[effort]}</span>
+                  {EFFORT_LABELS[effort]}
+                </span>
+              ) : (
+                <Dash />
+              )}
+            </Fact>
+
+            <Fact label="Надёжность">
+              {relPct !== null ? (
+                <div className="flex items-center gap-2">
+                  <span className="tabular-nums">{relPct}%</span>
+                  <div className="h-1 w-12 overflow-hidden rounded-full bg-zinc-800">
+                    <div
+                      className={cn(
+                        "h-full rounded-full",
+                        relPct >= 66 ? "bg-emerald-400" : relPct >= 33 ? "bg-amber-400" : "bg-red-400"
+                      )}
+                      style={{ width: `${relPct}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <Dash />
+              )}
+            </Fact>
+
+            <Fact label="Нашли">
+              {offer.first_seen_at ? (
+                <span className="tabular-nums">{timeAgo(offer.first_seen_at)}</span>
+              ) : (
+                <Dash />
+              )}
+            </Fact>
+
+            {engine && <Fact label="Движок">{engine}</Fact>}
+
+            <div className="col-span-2 min-w-0 sm:col-span-3">
+              <dt className="text-[11px] uppercase tracking-wide text-zinc-600">Модели</dt>
+              <dd className="mt-1">
+                {offer.models.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {offer.models.map((m) => (
+                      <ModelTag key={m} model={m} />
+                    ))}
+                  </div>
+                ) : (
+                  <Dash />
+                )}
+              </dd>
+            </div>
+          </dl>
+
+          {/* КАК ПОЛУЧИТЬ */}
           <Section title="Как получить">
             {steps.length > 0 ? (
-              <ol className="space-y-2.5">
+              <ol className="space-y-2">
                 {steps.map((step, i) => (
-                  <li key={i} className="flex gap-3 text-[15px] text-zinc-200 leading-relaxed">
-                    <span className="flex items-center justify-center shrink-0 w-5 h-5 mt-0.5 rounded-full bg-zinc-800 text-zinc-400 text-xs font-medium tabular-nums">
+                  <li key={i} className="flex gap-2.5 text-[13px] leading-relaxed text-zinc-200">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[11px] font-medium tabular-nums text-zinc-400">
                       {i + 1}
                     </span>
                     <span className="min-w-0">{step}</span>
                   </li>
                 ))}
               </ol>
+            ) : richest?.raw_text ? (
+              <div className="rounded-md border border-zinc-800 bg-zinc-950/50 p-3">
+                <div className="mb-1.5 flex items-center gap-2 text-[11px] text-zinc-500">
+                  <span>Из источника:</span>
+                  <SourceBadge source={richest.source} />
+                </div>
+                <p className="max-h-60 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-300">
+                  {richest.raw_text}
+                </p>
+              </div>
             ) : (
-              <p className="text-sm text-zinc-500 italic">
-                Шаги не извлечены автоматически — смотри оригиналы источников ниже.
+              <p className="rounded-md border border-dashed border-zinc-800 px-3 py-2.5 text-[13px] text-zinc-500">
+                Шаги не извлечены — открой сайт или оригинал источника.
               </p>
             )}
           </Section>
 
-          {/* Откуда — список ВСЕХ источников */}
-          <Section
-            title={`Откуда · ${signals.length}`}
-            right={leadHours ? <LeadBadge leadHours={leadHours} /> : undefined}
-          >
+          {/* ТРЕБОВАНИЯ */}
+          {(requirements || offer.referral_required) && (
+            <Section title="Требования">
+              <div className="space-y-2">
+                {requirements && (
+                  <p className="text-[13px] leading-relaxed text-zinc-300">{requirements}</p>
+                )}
+                {offer.referral_required && (
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-300">
+                    🔗 нужна реф-ссылка
+                  </span>
+                )}
+              </div>
+            </Section>
+          )}
+
+          {/* ОТКУДА */}
+          <Section title="Откуда" count={signals.length || undefined}>
             {signals.length > 0 ? (
-              <div className="space-y-2.5">
+              <div className="space-y-1.5">
                 {signals.map((sig, i) => (
-                  <SourceItem key={`${sig.source}-${sig.source_url}-${i}`} sig={sig} />
+                  <SourceRow key={`${sig.source}-${sig.source_url ?? i}`} sig={sig} />
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-zinc-500 italic flex items-center gap-2">
-                <Radio className="w-3.5 h-3.5" /> Загрузка источников…
+              <p className="flex items-center gap-2 text-[13px] text-zinc-500">
+                <Radio className="h-3.5 w-3.5" /> Источники загружаются…
               </p>
             )}
-          </Section>
-
-          {/* Требования */}
-          <Section title="Требования">
-            <RequirementIcons offer={offer} />
           </Section>
         </div>
       </div>
@@ -230,8 +385,8 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
 
 export function OfferDetailEmpty() {
   return (
-    <div className="flex flex-col items-center justify-center h-full bg-zinc-900/30 border border-dashed border-zinc-800 rounded-xl text-center p-8 gap-3">
-      <ArrowLeft className="w-7 h-7 text-zinc-700" />
+    <div className="flex h-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-800 bg-zinc-900/30 p-8 text-center">
+      <ArrowLeft className="h-7 w-7 text-zinc-700" />
       <p className="text-sm text-zinc-500">Выбери оффер слева — здесь появятся детали</p>
     </div>
   );
