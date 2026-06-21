@@ -40,15 +40,23 @@ def cmd_run(_: argparse.Namespace) -> None:
 
 
 def cmd_collect_once(_: argparse.Namespace) -> None:
-    """Run all collectors once — used by GitHub Actions."""
+    """Run all collectors once — used by GitHub Actions / Cloudflare cron.
+
+    Skips realtime stream/ingest collectors (certstream WebSocket, telegram
+    Telethon) which are meant for the long-running scheduler. CT-log coverage
+    in one-shot mode is provided by the `crtsh` HTTP-poll collector instead.
+    """
     from .pipeline import async_pipeline
 
+    skip = {"certstream", "telegram"}
     load_builtin()
     init_db()
 
     async def run() -> None:
         registry = get_registry()
         for name, cls in registry.items():
+            if name in skip:
+                continue
             try:
                 collector = cls()
                 signals = list(await collector.collect())
