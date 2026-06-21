@@ -24,7 +24,9 @@ log = get_logger("forum_rss")
 FEEDS = {
     "nodeseek": "https://rss.nodeseek.com/",
     "linuxdo": "https://linux.do/latest.rss",
+    "linuxdo_top": "https://linux.do/top.rss",
     "v2ex": "https://www.v2ex.com/feed/tab/all.xml",
+    "hostloc": "https://hostloc.com/forum.php?mod=rss",
 }
 
 _TAG_RE = re.compile(r"<[^>]+>")

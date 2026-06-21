@@ -44,7 +44,7 @@ function offerToDict(offer: Record<string, unknown>, domain: string | null) {
 
 // GET /api/offers
 app.get('/api/offers', async (c) => {
-  const { type, min_amount, model, status, q, limit = '100', offset = '0' } = c.req.query()
+  const { type, min_amount, model, status, q, sort, since_hours, limit = '100', offset = '0' } = c.req.query()
 
   let sql = `
     SELECT o.*, s.canonical_domain, s.name as service_name,
@@ -63,8 +63,22 @@ app.get('/api/offers', async (c) => {
     sql += ' AND (LOWER(s.canonical_domain) LIKE ? OR LOWER(COALESCE(s.name,"")) LIKE ?)'
     params.push(`%${q.toLowerCase()}%`, `%${q.toLowerCase()}%`)
   }
+  // Freshness window: only offers first seen within the last N hours.
+  if (since_hours) {
+    const h = Math.max(1, Math.min(Number(since_hours) || 0, 24 * 365))
+    sql += " AND o.first_seen_at >= datetime('now', ?)"
+    params.push(`-${h} hours`)
+  }
 
-  sql += ' ORDER BY o.score DESC, o.first_seen_at DESC'
+  // Sorting. Default 'score' is recency-dominant (see scorer). 'new' = pure
+  // recency, 'amount' = biggest bonus first.
+  if (sort === 'new') {
+    sql += ' ORDER BY o.first_seen_at DESC, o.score DESC'
+  } else if (sort === 'amount') {
+    sql += ' ORDER BY o.amount DESC, o.score DESC'
+  } else {
+    sql += ' ORDER BY o.score DESC, o.first_seen_at DESC'
+  }
   sql += ` LIMIT ? OFFSET ?`
   params.push(Number(limit), Number(offset))
 

@@ -77,6 +77,8 @@ def query_offers(
     model: Optional[str] = None,
     status: Optional[str] = None,
     q: Optional[str] = None,
+    sort: Optional[str] = None,
+    since_hours: Optional[float] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict]:
@@ -89,6 +91,11 @@ def query_offers(
         stmt = stmt.where(Offer.amount >= min_amount)
     if status:
         stmt = stmt.where(Service.status == status)
+    if since_hours:
+        import datetime as _dt
+        from .models import utcnow
+        cutoff = utcnow() - _dt.timedelta(hours=float(since_hours))
+        stmt = stmt.where(Offer.first_seen_at >= cutoff)
     if q:
         like = f"%{q.lower()}%"
         stmt = stmt.where(
@@ -96,7 +103,12 @@ def query_offers(
             | func.lower(func.coalesce(Service.name, "")).like(like)
             | func.lower(func.coalesce(Offer.claim_steps, "")).like(like)
         )
-    stmt = stmt.order_by(Offer.score.desc(), Offer.first_seen_at.desc())
+    if sort == "new":
+        stmt = stmt.order_by(Offer.first_seen_at.desc(), Offer.score.desc())
+    elif sort == "amount":
+        stmt = stmt.order_by(Offer.amount.desc().nullslast(), Offer.score.desc())
+    else:
+        stmt = stmt.order_by(Offer.score.desc(), Offer.first_seen_at.desc())
     rows = session.execute(stmt).all()
     items = [offer_to_dict(o, s) for (o, s) in rows]
 
@@ -184,12 +196,15 @@ def create_app() -> FastAPI:
         model: Optional[str] = None,
         status: Optional[str] = None,
         q: Optional[str] = None,
+        sort: Optional[str] = None,
+        since_hours: Optional[float] = None,
         limit: int = Query(100, le=500),
         offset: int = 0,
     ):
         with session_scope() as s:
             items = query_offers(s, type=type, effort=effort, min_amount=min_amount, model=model,
-                                 status=status, q=q, limit=limit, offset=offset)
+                                 status=status, q=q, sort=sort, since_hours=since_hours,
+                                 limit=limit, offset=offset)
         return {"count": len(items), "items": items}
 
     @app.get("/api/services/{service_id}")

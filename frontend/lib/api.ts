@@ -38,6 +38,8 @@ export interface FetchOffersParams {
   model?: string;
   status?: string;
   q?: string;
+  sort?: string;
+  since_hours?: number;
   limit?: number;
   offset?: number;
 }

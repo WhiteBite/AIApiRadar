@@ -29,6 +29,7 @@ def get_registry() -> Dict[str, Type[Collector]]:
 def load_builtin() -> None:
     """Import built-in collector modules so they self-register."""
     from . import (  # noqa: F401
-        certstream, crtsh, coupon, directories, forum_rss, github, huggingface,
-        producthunt, searchdorks, telegram, youtube,
+        certstream, crtsh, coupon, directories, forum_rss, github, github_lists,
+        hackernews, huggingface, producthunt, reddit, searchdorks, telegram,
+        youtube,
     )

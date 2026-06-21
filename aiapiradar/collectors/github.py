@@ -23,6 +23,9 @@ QUERIES = [
     '"free credits" (claude OR gpt OR gemini) api in:name,description,readme',
     '"free api" key signup credits',
     'new-api OR one-api free credits register',
+    'sub2api OR CLIProxyAPI 注册送 OR "free credits"',
+    '中转站 注册送 api in:name,description,readme',
+    'awesome ai proxy relay 中转站 in:name,description',
 ]
 
 

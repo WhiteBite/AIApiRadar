@@ -109,6 +109,7 @@ export interface OffersFilters {
   minAmount: number | "";
   model: string;
   sort: "score" | "amount" | "newest";
+  sinceHours: number | "";   // freshness window; "" = all time
 }
 
 // Map tab → API params

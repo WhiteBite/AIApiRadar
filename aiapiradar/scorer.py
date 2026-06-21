@@ -30,13 +30,29 @@ EASE_BY_TYPE = {
     "abuse": 0.3,
 }
 
+# Freshness is the product's core: new offers matter, old ones are dead weight.
+# Recency is a multiplicative decay so age dominates ranking regardless of how
+# fat the bonus is. Half-life ≈ 2.5 days → ~0.14 after a week, ~0.02 after two.
+HALF_LIFE_HOURS = 60.0
+# Quality (amount/ease/reliability) only modulates within this band, so a brand
+# new mediocre offer still outranks a stale jackpot.
+QUALITY_FLOOR = 0.35
+
 
 # ─── Pure math helpers ────────────────────────────────────────────────────────
 
 def freshness_score(age_hours: float) -> float:
+    """Legacy linear freshness (kept for callers/tests). See recency_decay."""
     if age_hours <= 0:
         return 1.0
-    return 1.0 / (1.0 + age_hours / 24.0)  # 1.0 now, 0.5 at 24h, 0.25 at 72h
+    return 1.0 / (1.0 + age_hours / 24.0)
+
+
+def recency_decay(age_hours: float) -> float:
+    """Exponential decay by age. 1.0 now → 0.5 at one half-life → ~0 when stale."""
+    if age_hours <= 0:
+        return 1.0
+    return 0.5 ** (age_hours / HALF_LIFE_HOURS)
 
 
 def amount_score(amount: Optional[float], cap: float = 200.0) -> float:
@@ -52,6 +68,26 @@ def ease_score(offer_type: str, referral_required: bool) -> float:
     return base
 
 
+def _quality_blend(amount, offer_type, referral_required, reliability,
+                   settings: Settings) -> float:
+    """Normalized 'how good is this offer' in [0,1] (amount/ease/reliability)."""
+    amt = amount_score(amount)
+    ease = ease_score(offer_type, referral_required)
+    wsum = (settings.score_w_amount + settings.score_w_ease
+            + settings.score_w_reliability) or 1.0
+    return (
+        settings.score_w_amount * amt
+        + settings.score_w_ease * ease
+        + settings.score_w_reliability * (reliability or 0.0)
+    ) / wsum
+
+
+def _compose(age_hours: float, quality: float) -> float:
+    """Recency dominates; quality modulates within [QUALITY_FLOOR, 1]."""
+    decay = recency_decay(age_hours)
+    return round(decay * (QUALITY_FLOOR + (1.0 - QUALITY_FLOOR) * quality), 4)
+
+
 def score_offer(offer, service, now: dt.datetime,
                 settings: Optional[Settings] = None) -> float:
     """Score an ORM Offer object (backward compat for legacy tests / callers)."""
@@ -61,18 +97,10 @@ def score_offer(offer, service, now: dt.datetime,
         first = first.replace(tzinfo=dt.timezone.utc)
     age_hours = max((now - first).total_seconds() / 3600.0, 0.0)
 
-    fresh = freshness_score(age_hours)
-    amt = amount_score(offer.amount)
-    ease = ease_score(offer.type, offer.referral_required)
     reliab = service.reliability if service else 0.0
-
-    total = (
-        settings.score_w_freshness * fresh
-        + settings.score_w_amount * amt
-        + settings.score_w_ease * ease
-        + settings.score_w_reliability * reliab
-    )
-    return round(total, 4)
+    quality = _quality_blend(offer.amount, offer.type, offer.referral_required,
+                             reliab, settings)
+    return _compose(age_hours, quality)
 
 
 # ─── Database-protocol path ──────────────────────────────────────────────────
@@ -113,18 +141,11 @@ def _rescore_all_db(db: Database, settings: Optional[Settings] = None) -> int:
             first = first.replace(tzinfo=dt.timezone.utc)
         age_hours = max((now - first).total_seconds() / 3600.0, 0.0)
 
-        fresh = freshness_score(age_hours)
-        amt = amount_score(row["amount"])
-        ease = ease_score(row["type"], bool(row["referral_required"]))
-        reliab = row["reliability"] or 0.0
-
-        score = round(
-            settings.score_w_freshness * fresh
-            + settings.score_w_amount * amt
-            + settings.score_w_ease * ease
-            + settings.score_w_reliability * reliab,
-            4,
+        quality = _quality_blend(
+            row["amount"], row["type"], bool(row["referral_required"]),
+            row["reliability"] or 0.0, settings,
         )
+        score = _compose(age_hours, quality)
         db.run("UPDATE offers SET score = ? WHERE id = ?", [score, row["id"]])
 
     log.info("rescored %d offers (db path)", len(rows))

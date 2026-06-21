@@ -18,7 +18,7 @@ import { MODEL_COLORS } from "@/lib/colors";
 import { useSaved } from "@/lib/saved";
 
 const DEFAULT_FILTERS: OffersFilters = {
-  tab: "all", q: "", minAmount: "", model: "", sort: "score",
+  tab: "all", q: "", minAmount: "", model: "", sort: "score", sinceHours: "",
 };
 
 const TABS: { value: FeedTab; label: string }[] = [
@@ -36,6 +36,15 @@ const SORT_OPTIONS = [
   { value: "newest", label: "Newest" },
 ];
 
+// Freshness windows (hours). The product is about what's NEW, so this is front
+// and center; "" means all-time.
+const WINDOWS: { value: number | ""; label: string }[] = [
+  { value: 24, label: "24ч" },
+  { value: 168, label: "7д" },
+  { value: 720, label: "30д" },
+  { value: "", label: "Всё" },
+];
+
 export default function FeedPage() {
   const [filters, setFilters] = useState<OffersFilters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -45,11 +54,13 @@ export default function FeedPage() {
   const tabFilter = TAB_FILTERS[filters.tab];
   const params: FetchOffersParams = {
     limit: 200,
+    sort: filters.sort === "newest" ? "new" : filters.sort,
     ...(tabFilter.effort && { effort: tabFilter.effort }),
     ...(tabFilter.status && { status: tabFilter.status }),
     ...(filters.q && { q: filters.q }),
     ...(filters.minAmount !== "" && { min_amount: filters.minAmount }),
     ...(filters.model && { model: filters.model }),
+    ...(filters.sinceHours !== "" && { since_hours: filters.sinceHours }),
   };
 
   const { data, isLoading } = useQuery({
@@ -106,6 +117,27 @@ export default function FeedPage() {
         </Tabs>
 
         <div className="flex-1" />
+
+        {/* Freshness window — the product is about what's NEW */}
+        <div className="flex items-center gap-0.5 rounded-md border border-zinc-800 p-0.5">
+          {WINDOWS.map((w) => {
+            const active = filters.sinceHours === w.value;
+            return (
+              <button
+                key={String(w.value)}
+                onClick={() => setFilters((f) => ({ ...f, sinceHours: w.value }))}
+                className={
+                  "h-7 px-2 rounded text-xs font-medium transition-colors " +
+                  (active
+                    ? "bg-zinc-700 text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-300")
+                }
+              >
+                {w.label}
+              </button>
+            );
+          })}
+        </div>
 
         <button
           onClick={() => setLiveOnly((v) => !v)}

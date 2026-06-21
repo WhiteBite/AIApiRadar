@@ -21,7 +21,11 @@ DORKS = [
     '"free credits" "sign up" (claude OR gpt OR gemini) -site:reddit.com',
     'inurl:redeem OR inurl:promo "$" api credits',
     'site:nodeseek.com 注册送 额度',
+    'site:linux.do 公益站 免费 API',
+    'site:v2ex.com 中转站 注册送',
     '"no credit card" free api credits register',
+    '白嫖 claude code api 注册送',
+    'API ключи триальный баланс регистрация бесплатно',
 ]
 
 ENDPOINT = "https://www.googleapis.com/customsearch/v1"
