@@ -32,7 +32,7 @@ def _dt_str(d: Optional[dt.datetime]) -> Optional[str]:
 async def run_watchdog(
     limit: Optional[int] = 50,
     stale_hours: float = 24.0,
-    timeout: float = 20.0,
+    timeout: float = 10.0,
 ) -> int:
     cutoff_str = _dt_str(utcnow() - dt.timedelta(hours=stale_hours))
 

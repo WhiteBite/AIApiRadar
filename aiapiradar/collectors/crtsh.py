@@ -40,7 +40,7 @@ class CrtshCollector(Collector):
     kind = "http-poll"
     interval = 3600  # once per hour — suitable for CF Cron free tier
 
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 12.0):
         self.timeout = timeout
 
     async def collect(self) -> Iterable[Signal]:
