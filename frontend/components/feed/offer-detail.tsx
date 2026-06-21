@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, ExternalLink, Radio, Star } from "lucide-react";
 import { cn, timeAgo, isWithinHours, scorePct } from "@/lib/utils";
@@ -10,7 +11,21 @@ import { useSaved } from "@/lib/saved";
 import { TypeBadge } from "@/components/ui/type-badge";
 import { ModelTag } from "@/components/ui/model-tag";
 import { SourceBadge } from "@/components/ui/source-badge";
+import { Favicon } from "@/components/ui/favicon";
 import { STATUS_DOT, EFFORT_COLORS } from "@/lib/colors";
+
+/** Forum/source names for display */
+const SOURCE_LABEL: Record<string, string> = {
+  forum_rss: "Форум", nodeseek: "NodeSeek", "linux.do": "linux.do",
+  v2ex: "V2EX", reddit: "Reddit", hackernews: "HN", telegram: "Telegram",
+  youtube: "YouTube", github: "GitHub", github_lists: "GitHub", github_issues: "GitHub",
+  producthunt: "Product Hunt", huggingface: "HuggingFace",
+};
+
+const FORUM_SOURCES = new Set([
+  "forum_rss", "nodeseek", "linux.do", "v2ex", "reddit",
+  "hackernews", "telegram", "youtube",
+]);
 
 export interface OfferDetailProps {
   offer: Offer;
@@ -107,6 +122,58 @@ function SourceRow({ sig }: { sig: Signal }) {
   );
 }
 
+/** Card showing an original forum/source post with expandable text. */
+function OriginalPost({ sig }: { sig: Signal }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = sig.raw_text ?? "";
+  const isLong = text.length > 400;
+  const displayed = !expanded && isLong ? text.slice(0, 400) + "…" : text;
+  const label = SOURCE_LABEL[sig.source] ?? sig.source;
+  const isForumPost = FORUM_SOURCES.has(sig.source);
+
+  return (
+    <div className={`rounded-lg border ${isForumPost ? "border-zinc-700/60 bg-zinc-900" : "border-zinc-800 bg-zinc-950/50"} overflow-hidden`}>
+      {/* Post header */}
+      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2">
+        <SourceBadge source={sig.source} />
+        <span className="text-[11px] text-zinc-400 font-medium">{label}</span>
+        {sig.channel && (
+          <span className="text-[11px] text-zinc-500">{sig.channel}</span>
+        )}
+        {sig.observed_at && (
+          <span className="ml-auto text-[11px] text-zinc-600 tabular-nums">
+            {timeAgo(sig.observed_at)}
+          </span>
+        )}
+        {isHttp(sig.source_url) && (
+          <a
+            href={sig.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-1 inline-flex items-center gap-0.5 text-[11px] text-zinc-500 hover:text-zinc-200"
+          >
+            оригинал <ArrowUpRight className="h-2.5 w-2.5" />
+          </a>
+        )}
+      </div>
+      {/* Post body */}
+      <div className="px-3 py-2.5">
+        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-300">
+          {displayed}
+        </p>
+        {isLong && (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="mt-2 text-[12px] text-zinc-500 hover:text-zinc-300 underline underline-offset-2"
+          >
+            {expanded ? "Свернуть" : "Показать полностью"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function OfferDetail({ offer, onClose }: OfferDetailProps) {
   const { data: service } = useQuery({
     queryKey: apiKeys.service(offer.service_id),
@@ -174,6 +241,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
           )}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
+              <Favicon domain={offer.domain} size={20} className="shrink-0" />
               <h2 className="truncate text-lg font-semibold leading-tight text-zinc-100">
                 {domain}
               </h2>
@@ -338,15 +406,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
                 ))}
               </ol>
             ) : richest?.raw_text ? (
-              <div className="rounded-md border border-zinc-800 bg-zinc-950/50 p-3">
-                <div className="mb-1.5 flex items-center gap-2 text-[11px] text-zinc-500">
-                  <span>Из источника:</span>
-                  <SourceBadge source={richest.source} />
-                </div>
-                <p className="max-h-60 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-300">
-                  {richest.raw_text}
-                </p>
-              </div>
+              <OriginalPost sig={richest} />
             ) : (
               <p className="rounded-md border border-dashed border-zinc-800 px-3 py-2.5 text-[13px] text-zinc-500">
                 Шаги не извлечены — открой сайт или оригинал источника.

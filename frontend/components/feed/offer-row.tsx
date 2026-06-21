@@ -3,6 +3,7 @@
 import { cn, timeAgo, isWithinHours } from "@/lib/utils";
 import { fmtValue } from "@/lib/types";
 import type { Offer } from "@/lib/types";
+import { Favicon } from "@/components/ui/favicon";
 
 interface OfferRowProps {
   offer: Offer;
@@ -14,6 +15,9 @@ const SOURCE_SHORT: Record<string, string> = {
   certstream: "CT", forum_rss: "форум", nodeseek: "nodeseek", github: "gh",
   huggingface: "HF", producthunt: "PH", directories: "каталог", coupon: "купон",
   telegram: "TG", youtube: "YT", export: "архив", crtsh: "CT",
+  reddit: "reddit", hackernews: "HN", github_lists: "gh",
+  github_issues: "gh", github_code: "gh", openrouter: "OR",
+  packages: "pkg", leaks: "leak", fofa: "fofa",
 };
 
 // Left accent bar by effort (visible at a glance while scanning)
@@ -46,39 +50,37 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
         isSelected ? "bg-zinc-800" : "hover:bg-zinc-800/50"
       )}
     >
-      {/* line 1: domain + value */}
-      <div className="flex items-baseline gap-2 min-w-0">
+      {/* line 1: favicon + domain + value */}
+      <div className="flex items-center gap-2 min-w-0">
+        <Favicon domain={offer.domain} size={14} className="shrink-0 opacity-80" />
         {isNew && (
-          <span className="shrink-0 self-center rounded-sm bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-1 py-px text-[9px] font-bold uppercase tracking-wide leading-none">
+          <span className="shrink-0 rounded-sm bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-1 py-px text-[9px] font-bold uppercase tracking-wide leading-none">
             new
           </span>
         )}
         <span className={cn(
-          "flex-1 min-w-0 truncate text-[15px] font-medium leading-tight",
+          "flex-1 min-w-0 truncate text-[14px] font-medium leading-tight",
           isSelected ? "text-white" : "text-zinc-100"
         )}>
           {domain}
         </span>
         {value && (
-          <span className={cn("text-[15px] font-bold tabular-nums shrink-0", valueColor)}>
+          <span className={cn("text-[14px] font-bold tabular-nums shrink-0", valueColor)}>
             {value}
           </span>
         )}
       </div>
 
       {/* line 2: models + source + age */}
-      <div className="flex items-center gap-1.5 mt-1 text-xs min-w-0">
-        <span className="flex-1 min-w-0 truncate text-zinc-400">
+      <div className="flex items-center gap-1.5 mt-1 text-xs min-w-0 pl-4">
+        <span className="flex-1 min-w-0 truncate text-zinc-500">
           {offer.models.length > 0 ? (
-            <>
-              {offer.models.slice(0, 4).join(" · ")}
-              {offer.models.length > 4 && ` +${offer.models.length - 4}`}
-            </>
+            offer.models.slice(0, 4).join(" · ") + (offer.models.length > 4 ? ` +${offer.models.length - 4}` : "")
           ) : (
-            <span className="text-zinc-600">—</span>
+            <span className="text-zinc-700">—</span>
           )}
         </span>
-        <span className="shrink-0 flex items-center gap-1.5 text-zinc-500">
+        <span className="shrink-0 flex items-center gap-1.5 text-zinc-600">
           {src && <span>{src}</span>}
           {src && <span className="text-zinc-700">·</span>}
           <span className="tabular-nums">{offer.first_seen_at ? timeAgo(offer.first_seen_at) : ""}</span>

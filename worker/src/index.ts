@@ -119,7 +119,7 @@ app.get('/api/services/:id', async (c) => {
   ).bind(id).all()
 
   const signalsRes = await c.env.DB.prepare(
-    'SELECT source, source_url, observed_at FROM signals WHERE service_id = ? ORDER BY observed_at DESC LIMIT 20'
+    'SELECT source, source_url, observed_at, raw_text FROM signals WHERE service_id = ? ORDER BY observed_at DESC LIMIT 20'
   ).bind(id).all()
 
   return c.json({
