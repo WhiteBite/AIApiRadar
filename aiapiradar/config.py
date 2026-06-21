@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     tg_api_hash: str = ""
     tg_session: str = "aiapiradar"
 
+    # Twitter / X (optional; enables keyword search in TwitterCollector)
+    # Get a free Bearer Token at developer.twitter.com → Free tier is enough.
+    tw_bearer_token: str = ""
+
     # Scoring weights
     score_w_freshness: float = 0.4
     score_w_amount: float = 0.3

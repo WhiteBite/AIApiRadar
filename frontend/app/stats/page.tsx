@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { fetchStats, apiKeys } from "@/lib/api";
+import { fetchStats, fetchAnalytics, apiKeys } from "@/lib/api";
 import { Header } from "@/components/layout/header";
 import { TYPE_COLORS, TYPE_LABELS, SOURCE_COLORS } from "@/lib/colors";
 import { cn } from "@/lib/utils";
@@ -56,6 +56,38 @@ function TypeBar({ type, count, max }: { type: string; count: number; max: numbe
   );
 }
 
+// ─── Source bar (for analytics by_source) ────────────────────────────────────
+function SourceBar({ source, count, max }: { source: string; count: number; max: number }) {
+  const pct = max > 0 ? Math.round((count / max) * 100) : 0;
+  const dot = (SOURCE_COLORS[source] ?? "")
+    .split(" ")
+    .find((c) => c.startsWith("bg-")) ?? "bg-zinc-500";
+  const barColor = dot.replace("/15", "");
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-xs text-zinc-400 w-28 shrink-0 truncate capitalize">
+        {source}
+      </span>
+      <div className="flex-1 bg-zinc-800 rounded-full h-2 overflow-hidden">
+        <div
+          className={cn("h-full rounded-full transition-all", barColor)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="text-xs text-zinc-500 tabular-nums w-8 text-right shrink-0">
+        {count}
+      </span>
+    </div>
+  );
+}
+
+// ─── Format fractional hours as "Xh Ym" ──────────────────────────────────────
+function formatHours(h: number): string {
+  const hours = Math.floor(Math.abs(h));
+  const mins = Math.round((Math.abs(h) - hours) * 60);
+  return `${hours}h ${mins}m`;
+}
+
 // ─── Source row ───────────────────────────────────────────────────────────────
 const SOURCES = [
   { key: "certstream", label: "CT Logs" },
@@ -90,6 +122,12 @@ export default function StatsPage() {
     staleTime: 30_000,
   });
 
+  const { data: analytics } = useQuery({
+    queryKey: apiKeys.analytics(),
+    queryFn: () => fetchAnalytics(),
+    staleTime: 30_000,
+  });
+
   const byType = stats?.by_type ?? {};
   const maxCount = Math.max(1, ...Object.values(byType).map(Number));
   const deadPct =
@@ -100,6 +138,13 @@ export default function StatsPage() {
     stats && stats.services > 0
       ? Math.round((stats.active / stats.services) * 100)
       : 0;
+
+  const leadTime = analytics?.lead_time;
+  const hasLeadData = (leadTime?.count_total ?? 0) > 0;
+  const maxSourceCount = Math.max(
+    1,
+    ...(analytics?.by_source ?? []).map((s) => s.count)
+  );
 
   return (
     <div className="min-h-screen bg-zinc-950">
@@ -159,20 +204,68 @@ export default function StatsPage() {
           </div>
         </section>
 
-        {/* Lead time placeholder */}
+        {/* Lead time vs Telegram */}
         <section>
           <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest mb-4">
-            Lead time vs Telegram
+            Обгоняем Telegram
           </h2>
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-            <p className="text-sm text-zinc-500">
-              Lead time data accumulates as collectors run and Telegram signals
-              are ingested. Enable Telegram ingest (
-              <code className="text-xs bg-zinc-800 px-1 rounded">
-                AIRADAR_TG_API_ID
-              </code>
-              ) to start measuring.
-            </p>
+          {!hasLeadData ? (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+              <p className="text-sm text-zinc-500">
+                Lead time data accumulates as collectors run and Telegram signals
+                are ingested. Enable Telegram ingest (
+                <code className="text-xs bg-zinc-800 px-1 rounded">
+                  AIRADAR_TG_API_ID
+                </code>
+                ) to start measuring.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <KpiCard
+                  label="Avg ahead of Telegram"
+                  value={
+                    leadTime?.avg_hours != null
+                      ? formatHours(leadTime.avg_hours)
+                      : "—"
+                  }
+                  accent="text-emerald-400"
+                />
+                <KpiCard
+                  label="Offers ahead"
+                  value={leadTime?.count_ahead ?? "—"}
+                  sub={`из ${leadTime?.count_total ?? 0} с данными`}
+                  accent="text-sky-400"
+                />
+                <KpiCard
+                  label="С описанием"
+                  value={analytics?.with_description ?? "—"}
+                  sub={`из ${analytics?.offers_total ?? 0} офферов`}
+                />
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Sources breakdown */}
+        <section>
+          <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest mb-4">
+            Источники сигналов
+          </h2>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-3">
+            {(analytics?.by_source ?? []).length === 0 ? (
+              <p className="text-sm text-zinc-600">No signal data yet.</p>
+            ) : (
+              (analytics?.by_source ?? []).map((s) => (
+                <SourceBar
+                  key={s.source}
+                  source={s.source}
+                  count={s.count}
+                  max={maxSourceCount}
+                />
+              ))
+            )}
           </div>
         </section>
       </div>

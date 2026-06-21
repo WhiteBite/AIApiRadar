@@ -6,6 +6,7 @@ than `stale_hours` ago.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 from typing import Optional
 
@@ -55,16 +56,31 @@ async def run_watchdog(
             log.info("watchdog: nothing stale to check")
             return 0
 
+        sem = asyncio.Semaphore(10)
+        per_service_timeout = timeout * 3
+
+        async def _probe_one(row: dict) -> None:
+            async with sem:
+                try:
+                    await asyncio.wait_for(
+                        enrich_service(db, row["id"], client, do_crtsh=with_crtsh),
+                        timeout=per_service_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    log.warning(
+                        "watchdog enrich timed out: %s", row["canonical_domain"]
+                    )
+                except Exception:
+                    log.warning(
+                        "watchdog enrich failed: %s", row["canonical_domain"]
+                    )
+
         async with httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
             headers={"User-Agent": "Mozilla/5.0 AiApiRadar/0.1"},
         ) as client:
-            for row in rows:
-                try:
-                    await enrich_service(db, row["id"], client, do_crtsh=with_crtsh)
-                except Exception:
-                    log.warning("watchdog enrich failed: %s", row["canonical_domain"])
+            await asyncio.gather(*(_probe_one(row) for row in rows))
 
         rescore_all(db)
         log.info("watchdog checked %d services", len(rows))

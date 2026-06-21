@@ -36,6 +36,12 @@ EN_STRONG = [
     "api trial", "no credit card", "no card required", "sign up free",
     "register for free", "free access", "free tokens", "free quota",
     "get free", "claim free", "free plan includes",
+    # Promo/coupon patterns: explicit enough to pass on their own
+    "promo code", "coupon code", "discount code", "use code",
+    # Free PRO/Pro plan announcements ("get PRO free", "free PRO plan")
+    "free pro", "pro for free", "pro plan free",
+    # Common startup launch phrasings that imply free access
+    "get it free", "access for free", "free with",
 ]
 # Weak: need ≥2 weak hits (or 1 strong) to pass — prevents "register" alone
 # from pulling in every SaaS launch.

@@ -108,11 +108,10 @@ export default function SettingsPage() {
                   </div>
                   <button
                     onClick={() => toggleMut.mutate(s)}
-                    className={`text-xs px-2 py-1 rounded-md border transition-colors ${
-                      s.enabled
+                    className={`text-xs px-2 py-1 rounded-md border transition-colors ${s.enabled
                         ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
                         : "border-zinc-700 text-zinc-500"
-                    }`}
+                      }`}
                   >
                     {s.enabled ? "вкл" : "выкл"}
                   </button>
@@ -144,6 +143,63 @@ export default function SettingsPage() {
             Коллекторы запускаются по расписанию командой{" "}
             <code className="bg-zinc-800 px-1 rounded">aiapiradar run</code>.
           </p>
+        </section>
+
+        {/* ── Telegram notifications ── */}
+        <section>
+          <h2 className="text-sm font-semibold text-zinc-200 mb-1">🔔 Telegram уведомления</h2>
+          <p className="text-sm text-zinc-500 mb-4">
+            Автоматическая рассылка свежих офферов в Telegram-чат после каждого запуска коллекторов.
+          </p>
+
+          {/* Status card */}
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 text-lg leading-none">🔐</span>
+              <div>
+                <p className="text-sm text-zinc-300 font-medium mb-1">
+                  Уведомления настраиваются через GitHub Secrets
+                </p>
+                <p className="text-sm text-zinc-500">
+                  Установи секреты{" "}
+                  <code className="text-xs bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 rounded text-zinc-200">
+                    TG_BOT_TOKEN
+                  </code>{" "}
+                  и{" "}
+                  <code className="text-xs bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 rounded text-zinc-200">
+                    TG_CHAT_ID
+                  </code>{" "}
+                  в настройках репозитория, и уведомления заработают автоматически.
+                </p>
+              </div>
+            </div>
+
+            <div className="border-t border-zinc-800 pt-3 flex items-center gap-2 text-sm text-zinc-400">
+              <span className="text-zinc-500">Что отправляется:</span>
+              <span>Свежие офферы с score ≥ 0.6, до 5 в час</span>
+            </div>
+          </div>
+
+          {/* Setup instructions */}
+          <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-3">
+              Как настроить
+            </p>
+            <ol className="text-sm text-zinc-400 space-y-1.5 list-decimal list-inside mb-3">
+              <li>
+                Создай бота через{" "}
+                <span className="text-zinc-300">@BotFather</span> и получи токен
+              </li>
+              <li>
+                Добавь бота в нужный чат и получи{" "}
+                <code className="text-xs bg-zinc-800 px-1 rounded">chat_id</code>
+              </li>
+              <li>Добавь секреты в репозиторий:</li>
+            </ol>
+            <pre className="bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-xs text-zinc-300 font-mono overflow-x-auto">
+              <code>{`gh secret set TG_BOT_TOKEN\ngh secret set TG_CHAT_ID`}</code>
+            </pre>
+          </div>
         </section>
       </div>
     </div>

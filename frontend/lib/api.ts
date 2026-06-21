@@ -96,6 +96,22 @@ export async function deleteSource(id: number): Promise<void> {
   await mutate(`/api/sources/${id}`, "DELETE");
 }
 
+export interface Analytics {
+  lead_time: {
+    avg_hours: number | null;
+    median_hours: number | null;
+    count_ahead: number;
+    count_total: number;
+  };
+  by_source: Array<{ source: string; count: number }>;
+  with_description: number;
+  offers_total: number;
+}
+
+export async function fetchAnalytics(): Promise<Analytics> {
+  return get<Analytics>('/api/analytics');
+}
+
 // TanStack Query cache keys
 export const apiKeys = {
   offers: (p: FetchOffersParams) => ["offers", p] as const,
@@ -103,4 +119,5 @@ export const apiKeys = {
   stats: () => ["stats"] as const,
   models: () => ["models"] as const,
   sources: () => ["sources"] as const,
+  analytics: () => ["analytics"] as const,
 };

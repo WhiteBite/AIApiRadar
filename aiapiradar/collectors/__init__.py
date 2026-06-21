@@ -31,5 +31,5 @@ def load_builtin() -> None:
     from . import (  # noqa: F401
         certstream, crtsh, coupon, directories, forum_rss, github, github_lists,
         hackernews, huggingface, producthunt, reddit, searchdorks, telegram,
-        youtube,
+        twitter, youtube,
     )

@@ -129,7 +129,8 @@ def _rescore_all_db(db: Database, settings: Optional[Settings] = None) -> int:
     rows = db.execute(
         """
         SELECT o.id, o.type, o.amount, o.referral_required,
-               o.first_seen_at, COALESCE(s.reliability, 0.0) AS reliability
+               o.first_seen_at, COALESCE(s.reliability, 0.0) AS reliability,
+               (SELECT COUNT(DISTINCT source) FROM signals WHERE service_id = o.service_id) AS source_count
         FROM offers o
         LEFT JOIN services s ON o.service_id = s.id
         """
@@ -145,7 +146,10 @@ def _rescore_all_db(db: Database, settings: Optional[Settings] = None) -> int:
             row["amount"], row["type"], bool(row["referral_required"]),
             row["reliability"] or 0.0, settings,
         )
-        score = _compose(age_hours, quality)
+        source_count = int(row.get("source_count") or 1)
+        boost = 1.0 + 0.15 * min(max(0, source_count - 1), 3)
+        # cap at 1.0 so score never exceeds 1
+        score = min(round(_compose(age_hours, quality) * boost, 4), 1.0)
         db.run("UPDATE offers SET score = ? WHERE id = ?", [score, row["id"]])
 
     log.info("rescored %d offers (db path)", len(rows))

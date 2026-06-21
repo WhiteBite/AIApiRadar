@@ -162,4 +162,61 @@ app.get('/api/stats', async (c) => {
   })
 })
 
+// GET /api/analytics
+app.get('/api/analytics', async (c) => {
+  const [leadRows, bySourceRows, descCount, totalCount] = await Promise.all([
+    c.env.DB.prepare(
+      'SELECT lead_hours FROM lead_metrics WHERE lead_hours IS NOT NULL ORDER BY lead_hours'
+    ).all<{ lead_hours: number }>(),
+    c.env.DB.prepare(
+      'SELECT source, COUNT(*) as cnt FROM signals GROUP BY source ORDER BY cnt DESC LIMIT 10'
+    ).all<{ source: string; cnt: number }>(),
+    c.env.DB.prepare(
+      'SELECT COUNT(*) as c FROM offers WHERE description IS NOT NULL'
+    ).first<{ c: number }>(),
+    c.env.DB.prepare(
+      'SELECT COUNT(*) as c FROM offers'
+    ).first<{ c: number }>(),
+  ])
+
+  const leadValues = (leadRows.results as { lead_hours: number }[]).map(r => r.lead_hours)
+  // Already sorted ASC by SQL
+  const count_total = leadValues.length
+  const aheadValues = leadValues.filter(v => v > 0)
+  const count_ahead = aheadValues.length
+
+  let avg_hours: number | null = null
+  let median_hours: number | null = null
+
+  if (aheadValues.length > 0) {
+    avg_hours = Math.round(
+      (aheadValues.reduce((a, b) => a + b, 0) / aheadValues.length) * 100
+    ) / 100
+  }
+
+  if (count_total > 0) {
+    const mid = Math.floor(count_total / 2)
+    median_hours = count_total % 2 === 0
+      ? (leadValues[mid - 1] + leadValues[mid]) / 2
+      : leadValues[mid]
+  }
+
+  const by_source = (bySourceRows.results as { source: string; cnt: number }[]).map(r => ({
+    source: r.source,
+    count: r.cnt,
+  }))
+
+  return c.json({
+    lead_time: {
+      avg_hours,
+      median_hours,
+      count_ahead,
+      count_total,
+    },
+    by_source,
+    with_description: descCount?.c ?? 0,
+    offers_total: totalCount?.c ?? 0,
+  })
+})
+
 export default app
