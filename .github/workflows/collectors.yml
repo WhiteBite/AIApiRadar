@@ -45,7 +45,7 @@ jobs:
         run: |
           python -m aiapiradar.cli init-db
           python -m aiapiradar.cli collect-once
-          python -m aiapiradar.cli enrich --limit 80 --stale-hours 6
+          python -m aiapiradar.cli enrich --limit 15 --stale-hours 12
           python -m aiapiradar.cli score
 
       - name: Push local SQLite → D1
