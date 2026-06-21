@@ -15,6 +15,7 @@ import { Select } from "@/components/ui/select";
 import { OfferList } from "@/components/feed/offer-list";
 import { OfferDetail, OfferDetailEmpty } from "@/components/feed/offer-detail";
 import { MODEL_COLORS } from "@/lib/colors";
+import { useSaved } from "@/lib/saved";
 
 const DEFAULT_FILTERS: OffersFilters = {
   tab: "all", q: "", minAmount: "", model: "", sort: "score",
@@ -26,6 +27,7 @@ const TABS: { value: FeedTab; label: string }[] = [
   { value: "medium", label: "🟡 Medium" },
   { value: "hard", label: "🔴 Hard" },
   { value: "dead", label: "💀 Dead" },
+  { value: "saved", label: "⭐" },
 ];
 
 const SORT_OPTIONS = [
@@ -37,6 +39,7 @@ const SORT_OPTIONS = [
 export default function FeedPage() {
   const [filters, setFilters] = useState<OffersFilters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const { ids: savedIds } = useSaved();
 
   const tabFilter = TAB_FILTERS[filters.tab];
   const params: FetchOffersParams = {
@@ -67,6 +70,10 @@ export default function FeedPage() {
 
   const offers = useMemo(() => {
     let list = data?.items ?? [];
+    if (filters.tab === "saved") {
+      const set = new Set(savedIds);
+      list = list.filter((o) => set.has(o.id));
+    }
     if (filters.sort === "newest") {
       list = [...list].sort((a, b) =>
         (b.first_seen_at ? Date.parse(b.first_seen_at) : 0) -
@@ -75,7 +82,7 @@ export default function FeedPage() {
       list = [...list].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
     }
     return list;
-  }, [data, filters.sort]);
+  }, [data, filters.sort, filters.tab, savedIds]);
 
   const selectedOffer: Offer | null = useMemo(
     () => offers.find((o) => o.id === selectedId) ?? null,

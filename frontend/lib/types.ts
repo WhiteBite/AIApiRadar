@@ -101,7 +101,7 @@ export interface Stats {
 
 // ─── UI helpers ─────────────────────────────────────────────────────────────
 
-export type FeedTab = "all" | "easy" | "medium" | "hard" | "dead";
+export type FeedTab = "all" | "easy" | "medium" | "hard" | "dead" | "saved";
 
 export interface OffersFilters {
   tab: FeedTab;
@@ -118,6 +118,7 @@ export const TAB_FILTERS: Record<FeedTab, { effort?: string; status?: string }> 
   medium: { effort: "medium" },
   hard: { effort: "hard" },
   dead: { status: "dead" },
+  saved: {},
 };
 
 // ─── Display helpers ─────────────────────────────────────────────────────────

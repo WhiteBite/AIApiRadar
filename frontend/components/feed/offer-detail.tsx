@@ -1,15 +1,17 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, Radio, Star } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Radio, Star } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
 import { fmtValue } from "@/lib/types";
 import type { Offer, Signal } from "@/lib/types";
 import { fetchService, apiKeys } from "@/lib/api";
+import { useSaved } from "@/lib/saved";
 import { EffortBadge } from "@/components/ui/effort-badge";
 import { TypeBadge } from "@/components/ui/type-badge";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ModelTag } from "@/components/ui/model-tag";
+import { SourceBadge } from "@/components/ui/source-badge";
 import { RequirementIcons } from "@/components/ui/requirement-icons";
 import { LeadBadge } from "@/components/ui/lead-badge";
 
@@ -31,26 +33,52 @@ function parseClaimSteps(s: string): string[] {
     .filter((x) => x.length > 2);
 }
 
-function pickProvenance(signals: Signal[]): Signal | null {
-  if (!signals.length) return null;
-  return [...signals].sort(
-    (a, b) => (b.raw_text?.length ?? 0) - (a.raw_text?.length ?? 0)
-  )[0];
-}
-
 function Section({ title, right, children }: {
   title: string; right?: React.ReactNode; children: React.ReactNode;
 }) {
   return (
     <section>
       <div className="flex items-center justify-between mb-2.5">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-          {title}
-        </h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">{title}</h3>
         {right}
       </div>
       {children}
     </section>
+  );
+}
+
+function isHttp(url: string | null): url is string {
+  return !!url && url.startsWith("http");
+}
+
+/** One source card in the "Откуда" list. */
+function SourceItem({ sig }: { sig: Signal }) {
+  const label = sig.channel ?? null;
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800/70">
+        <SourceBadge source={sig.source} />
+        {label && <span className="text-xs text-zinc-300 truncate">{label}</span>}
+        {sig.observed_at && (
+          <span className="text-xs text-zinc-500 shrink-0">{timeAgo(sig.observed_at)}</span>
+        )}
+        {isHttp(sig.source_url) && (
+          <a
+            href={sig.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto inline-flex items-center gap-0.5 text-xs text-zinc-400 hover:text-white shrink-0"
+          >
+            оригинал <ArrowUpRight className="w-3 h-3" />
+          </a>
+        )}
+      </div>
+      {sig.raw_text && (
+        <p className="px-3 py-2.5 text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap max-h-56 overflow-y-auto">
+          {sig.raw_text}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -60,12 +88,23 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
     queryFn: () => fetchService(offer.service_id),
     staleTime: 60_000,
   });
+  const { isSaved, toggle } = useSaved();
 
   const domain = offer.domain ?? offer.name ?? "Unknown";
   const value = fmtValue(offer.amount, offer.unit, offer.currency);
   const steps = offer.claim_steps ? parseClaimSteps(offer.claim_steps) : [];
-  const prov = service ? pickProvenance(service.signals) : null;
   const aliases = service?.aliases ?? [];
+  const saved = isSaved(offer.id);
+
+  // All sources, richest text first; real links float to top.
+  const signals = (service?.signals ?? [])
+    .slice()
+    .sort((a, b) => {
+      const linkA = isHttp(a.source_url) ? 1 : 0;
+      const linkB = isHttp(b.source_url) ? 1 : 0;
+      if (linkA !== linkB) return linkB - linkA;
+      return (b.raw_text?.length ?? 0) - (a.raw_text?.length ?? 0);
+    });
 
   let leadHours: number | null = null;
   if (offer.domain_first_seen && offer.first_seen_at) {
@@ -75,7 +114,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
 
   return (
     <div className="flex flex-col h-full bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden">
-      {/* ── HERO (always visible) ── */}
+      {/* ── HERO ── */}
       <div className="shrink-0 px-6 pt-5 pb-5 border-b border-zinc-800 bg-zinc-900">
         <div className="flex items-start gap-3">
           {onClose && (
@@ -93,9 +132,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
         </div>
 
         {aliases.length > 0 && (
-          <p className="mt-1 text-xs text-zinc-500 truncate">
-            также: {aliases.join(", ")}
-          </p>
+          <p className="mt-1 text-xs text-zinc-500 truncate">также: {aliases.join(", ")}</p>
         )}
 
         <div className="flex items-center gap-3 mt-3 flex-wrap">
@@ -109,23 +146,29 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
           </div>
         </div>
 
-        {/* CTA row — always reachable, no scroll needed */}
+        {/* CTA row */}
         <div className="flex items-center gap-2 mt-4">
           {offer.url && (
             <a
               href={offer.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-100 hover:bg-white text-zinc-900 text-sm font-semibold transition-colors"
             >
-              Открыть сайт <ExternalLink className="w-4 h-4" />
+              Открыть сайт <ArrowUpRight className="w-4 h-4" />
             </a>
           )}
           <button
-            className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-            title="Сохранить (скоро)"
+            onClick={() => toggle(offer.id)}
+            title={saved ? "Убрать из сохранённых" : "Сохранить"}
+            className={cn(
+              "flex items-center justify-center px-3.5 py-2.5 rounded-lg border transition-colors",
+              saved
+                ? "bg-amber-500/15 text-amber-300 border-amber-500/40"
+                : "border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
+            )}
           >
-            <Star className="w-4 h-4" />
+            <Star className={cn("w-4 h-4", saved && "fill-amber-300")} />
           </button>
           <div className="ml-1 shrink-0">
             <StatusBadge status={offer.status} />
@@ -133,7 +176,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
         </div>
       </div>
 
-      {/* ── Scrollable content, constrained reading width ── */}
+      {/* ── Scroll content ── */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl px-6 py-6 space-y-7">
 
@@ -152,41 +195,26 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
               </ol>
             ) : (
               <p className="text-sm text-zinc-500 italic">
-                Шаги не извлечены — смотри оригинал поста ниже.
+                Шаги не извлечены автоматически — смотри оригиналы источников ниже.
               </p>
             )}
           </Section>
 
-          {/* Откуда */}
+          {/* Откуда — список ВСЕХ источников */}
           <Section
-            title="Откуда"
+            title={`Откуда · ${signals.length}`}
             right={leadHours ? <LeadBadge leadHours={leadHours} /> : undefined}
           >
-            {prov ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm text-zinc-400">
-                  <Radio className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                  <span className="font-medium text-zinc-300">{prov.channel ?? prov.source}</span>
-                  {prov.observed_at && <span className="text-zinc-500">· {timeAgo(prov.observed_at)}</span>}
-                </div>
-                {prov.raw_text && (
-                  <blockquote className="text-[15px] text-zinc-300 leading-relaxed bg-zinc-950/70 border border-zinc-800 rounded-lg px-4 py-3 whitespace-pre-wrap">
-                    {prov.raw_text}
-                  </blockquote>
-                )}
-                {prov.source_url?.startsWith("http") && (
-                  <a
-                    href={prov.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300"
-                  >
-                    Открыть оригинал <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                )}
+            {signals.length > 0 ? (
+              <div className="space-y-2.5">
+                {signals.map((sig, i) => (
+                  <SourceItem key={`${sig.source}-${sig.source_url}-${i}`} sig={sig} />
+                ))}
               </div>
             ) : (
-              <p className="text-sm text-zinc-500 italic">Загрузка источника…</p>
+              <p className="text-sm text-zinc-500 italic flex items-center gap-2">
+                <Radio className="w-3.5 h-3.5" /> Загрузка источников…
+              </p>
             )}
           </Section>
 
