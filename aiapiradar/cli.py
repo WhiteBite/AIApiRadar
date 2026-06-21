@@ -158,6 +158,42 @@ def cmd_reclassify(args: argparse.Namespace) -> None:
     log.info("reclassified %d offers, rescored %d", updated, n)
 
 
+def cmd_dump_sql(args: argparse.Namespace) -> None:
+    """Export all tables as DELETE + INSERT statements for a D1 reseed.
+
+    Used by the collectors CI workflow to push the locally-collected SQLite
+    state back into Cloudflare D1 (via `wrangler d1 execute --file`). Explicit
+    ids are preserved so foreign-key references stay intact; DELETEs are
+    prepended (reverse FK order) so the reseed is a clean replace.
+    """
+    from .db import get_db, init_db
+
+    tables = ["services", "offers", "signals", "sources", "lead_metrics"]
+
+    def esc(v: object) -> str:
+        if v is None:
+            return "NULL"
+        if isinstance(v, bool):
+            return "1" if v else "0"
+        if isinstance(v, (int, float)):
+            return repr(v)
+        return "'" + str(v).replace("'", "''") + "'"
+
+    init_db()
+    lines = [f"DELETE FROM {t};" for t in reversed(tables)]
+    with get_db() as db:
+        for t in tables:
+            for row in db.execute(f"SELECT * FROM {t}"):
+                cols = list(row.keys())
+                collist = ",".join(cols)
+                vals = ",".join(esc(row[c]) for c in cols)
+                lines.append(f"INSERT INTO {t} ({collist}) VALUES ({vals});")
+
+    with open(args.output, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    log.info("dumped %d statements to %s", len(lines), args.output)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aiapiradar")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -186,6 +222,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_reclassify = sub.add_parser("reclassify", help="LLM-reclassify stored offers in batches (fits free-tier quotas)")
     p_reclassify.add_argument("--batch-size", type=int, default=15)
     p_reclassify.set_defaults(func=cmd_reclassify)
+
+    p_dump = sub.add_parser("dump-sql", help="export all tables as DELETE+INSERT SQL (for D1 reseed)")
+    p_dump.add_argument("--output", default="seed.sql")
+    p_dump.set_defaults(func=cmd_dump_sql)
     return parser
 
 
