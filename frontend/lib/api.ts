@@ -112,6 +112,16 @@ export async function fetchAnalytics(): Promise<Analytics> {
   return get<Analytics>('/api/analytics');
 }
 
+export interface VoteResult { likes: number; dislikes: number; my_vote: number }
+
+export async function castVote(offerId: number, vote: 1 | -1 | 0): Promise<VoteResult> {
+  return mutate<VoteResult>(`/api/offers/${offerId}/vote`, 'POST', { vote });
+}
+
+export async function fetchMyVote(offerId: number): Promise<{ my_vote: number }> {
+  return get<{ my_vote: number }>(`/api/offers/${offerId}/my-vote`);
+}
+
 // TanStack Query cache keys
 export const apiKeys = {
   offers: (p: FetchOffersParams) => ["offers", p] as const,

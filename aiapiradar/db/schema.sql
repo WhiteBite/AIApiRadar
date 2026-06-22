@@ -92,6 +92,14 @@ CREATE INDEX IF NOT EXISTS idx_domain_candidates_status_attempts
 CREATE INDEX IF NOT EXISTS idx_domain_candidates_domain
     ON domain_candidates (domain);
 
--- Index on the signals dedup key used in store.persist.
-CREATE INDEX IF NOT EXISTS idx_signals_source_source_url
-    ON signals (source, source_url);
+-- Votes: per-offer like/dislike, one vote per browser fingerprint (SHA-256 of IP+UA).
+-- Shared across all visitors — anyone can see aggregated counts.
+CREATE TABLE IF NOT EXISTS votes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  offer_id    INTEGER NOT NULL REFERENCES offers(id),
+  fingerprint TEXT    NOT NULL,
+  vote        INTEGER NOT NULL,  -- +1 like, -1 dislike
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(offer_id, fingerprint)
+);
+CREATE INDEX IF NOT EXISTS idx_votes_offer ON votes(offer_id);

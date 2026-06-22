@@ -86,7 +86,7 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
           {src && <span className="text-zinc-700">·</span>}
           <span className="tabular-nums">{offer.first_seen_at ? timeAgo(offer.first_seen_at) : ""}</span>
         </span>
-        <LikeButtons offerId={offer.id} compact />
+        <LikeButtons offerId={offer.id} compact initialLikes={offer.likes} initialDislikes={offer.dislikes} />
       </div>
     </button>
   );

@@ -33,6 +33,8 @@ export interface Offer {
   engine: string | null;
   domain_first_seen: string | null;
   first_seen_at: string | null;
+  likes: number;
+  dislikes: number;
 }
 
 export interface OffersResponse {

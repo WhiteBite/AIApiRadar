@@ -74,6 +74,15 @@ jobs:
         working-directory: worker
         run: npm ci
 
+      - name: Create votes table in D1
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: >
+            d1 execute aiapiradar --remote --command
+            "CREATE TABLE IF NOT EXISTS votes (id INTEGER PRIMARY KEY AUTOINCREMENT, offer_id INTEGER NOT NULL, fingerprint TEXT NOT NULL, vote INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(offer_id, fingerprint)); CREATE INDEX IF NOT EXISTS idx_votes_offer ON votes(offer_id);"
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:

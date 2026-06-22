@@ -129,6 +129,17 @@ CREATE INDEX IF NOT EXISTS idx_domain_candidates_domain
 
 CREATE INDEX IF NOT EXISTS idx_signals_source_source_url
     ON signals (source, source_url);
+
+-- Votes: per-offer like/dislike, one vote per fingerprint (SHA-256 of IP+UA).
+CREATE TABLE IF NOT EXISTS votes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  offer_id    INTEGER NOT NULL REFERENCES offers(id),
+  fingerprint TEXT    NOT NULL,
+  vote        INTEGER NOT NULL,  -- +1 like, -1 dislike
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(offer_id, fingerprint)
+);
+CREATE INDEX IF NOT EXISTS idx_votes_offer ON votes(offer_id);
 """
 
 

@@ -2,12 +2,12 @@
   "version": "v1",
   "hooks": [
     {
-      "name": "Напоминание: web.py не деплоится на сайт",
-      "trigger": "PreToolUse",
-      "matcher": "str_replace|fs_write",
+      "name": "web.py не деплоится на сайт",
+      "trigger": "PostFileSave",
+      "matcher": "web\\\\.py",
       "action": {
         "type": "agent",
-        "prompt": "Если ты редактируешь `aiapiradar/web.py` с целью добавить или изменить API-эндпоинты которые должны работать на продакшн-сайте — СТОП. Продакшн-сайт работает на Cloudflare Worker в `worker/src/index.ts` (TypeScript, Hono), а не на Python FastAPI. Изменения в `web.py` не попадут на сайт. Нужный файл: `worker/src/index.ts`. Исключение: если задача явно про локальную разработку или VDS — тогда `web.py` правильный файл."
+        "prompt": "Ты редактируешь `aiapiradar/web.py`. Убедись что цель — локальная разработка или VDS, а не продакшн-сайт. Продакшн API работает на Cloudflare Worker в `worker/src/index.ts`. Если нужен новый эндпоинт на сайте — он должен быть добавлен и туда тоже."
       }
     }
   ]

@@ -313,7 +313,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
             </a>
           )}
           <div className="flex-1" />
-          <LikeButtons offerId={offer.id} />
+          <LikeButtons offerId={offer.id} initialLikes={offer.likes} initialDislikes={offer.dislikes} />
         </div>
       </div>
 

@@ -11,7 +11,7 @@ const app = new Hono<{ Bindings: Env }>()
 // CORS for the Next.js frontend (Cloudflare Pages)
 app.use('*', cors({
   origin: ['https://aiapiradar.cf.whitebite.ru', 'https://aiapiradar.pages.dev', 'http://localhost:3000'],
-  allowMethods: ['GET', 'PATCH'],
+  allowMethods: ['GET', 'PATCH', 'POST'],
 }))
 
 // Helper: parse JSON fields
@@ -45,7 +45,20 @@ function offerToDict(offer: Record<string, unknown>, domain: string | null) {
     first_seen_at: offer.first_seen_at,
     source: offer.source ?? null,
     source_url: offer.source_url ?? null,
+    likes: Number(offer.likes ?? 0),
+    dislikes: Number(offer.dislikes ?? 0),
   }
+}
+
+// ── Fingerprint helper ────────────────────────────────────────────────────────
+// SHA-256 of CF-Connecting-IP + User-Agent — identifies a visitor without storing PII.
+async function fingerprint(req: Request): Promise<string> {
+  const ip = req.headers.get('CF-Connecting-IP')
+    ?? req.headers.get('X-Forwarded-For')?.split(',')[0]?.trim()
+    ?? 'unknown';
+  const ua = req.headers.get('User-Agent') ?? 'unknown';
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${ip}|${ua}`));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // GET /api/offers
@@ -57,9 +70,17 @@ app.get('/api/offers', async (c) => {
            s.status as service_status, s.reliability, s.engine,
            s.domain_first_seen,
            (SELECT source FROM signals WHERE offer_id = o.id ORDER BY observed_at ASC LIMIT 1) as source,
-           (SELECT source_url FROM signals WHERE offer_id = o.id ORDER BY observed_at ASC LIMIT 1) as source_url
+           (SELECT source_url FROM signals WHERE offer_id = o.id ORDER BY observed_at ASC LIMIT 1) as source_url,
+           COALESCE(v.likes, 0) as likes,
+           COALESCE(v.dislikes, 0) as dislikes
     FROM offers o
     LEFT JOIN services s ON o.service_id = s.id
+    LEFT JOIN (
+      SELECT offer_id,
+             SUM(CASE WHEN vote=1 THEN 1 ELSE 0 END) as likes,
+             SUM(CASE WHEN vote=-1 THEN 1 ELSE 0 END) as dislikes
+      FROM votes GROUP BY offer_id
+    ) v ON v.offer_id = o.id
     WHERE 1=1
   `
   const params: (string | number)[] = []
@@ -331,6 +352,51 @@ app.get('/api/keys', async (c) => {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, unlocks]) => ({ key, present: false, unlocks }))
   return c.json(result)
+})
+
+// ── Voting endpoints ──────────────────────────────────────────────────────────
+
+// POST /api/offers/:id/vote  { vote: 1 | -1 | 0 }   (0 = remove vote)
+app.post('/api/offers/:id/vote', async (c) => {
+  const offerId = Number(c.req.param('id'))
+  if (!offerId) return c.json({ error: 'invalid id' }, 400)
+
+  const body = await c.req.json<{ vote: number }>().catch(() => ({ vote: 0 }))
+  const vote = Number(body.vote)
+  if (![1, -1, 0].includes(vote)) return c.json({ error: 'vote must be 1, -1 or 0' }, 400)
+
+  const fp = await fingerprint(c.req.raw)
+
+  if (vote === 0) {
+    await c.env.DB.prepare(
+      'DELETE FROM votes WHERE offer_id=? AND fingerprint=?'
+    ).bind(offerId, fp).run()
+  } else {
+    await c.env.DB.prepare(
+      'INSERT OR REPLACE INTO votes (offer_id, fingerprint, vote, created_at) VALUES (?, ?, ?, datetime("now"))'
+    ).bind(offerId, fp, vote).run()
+  }
+
+  const counts = await c.env.DB.prepare(
+    `SELECT SUM(CASE WHEN vote=1  THEN 1 ELSE 0 END) as likes,
+            SUM(CASE WHEN vote=-1 THEN 1 ELSE 0 END) as dislikes
+     FROM votes WHERE offer_id=?`
+  ).bind(offerId).first<{ likes: number; dislikes: number }>()
+
+  return c.json({ likes: counts?.likes ?? 0, dislikes: counts?.dislikes ?? 0, my_vote: vote })
+})
+
+// GET /api/offers/:id/my-vote  — returns this visitor's vote for the offer
+app.get('/api/offers/:id/my-vote', async (c) => {
+  const offerId = Number(c.req.param('id'))
+  if (!offerId) return c.json({ error: 'invalid id' }, 400)
+
+  const fp = await fingerprint(c.req.raw)
+  const row = await c.env.DB.prepare(
+    'SELECT vote FROM votes WHERE offer_id=? AND fingerprint=?'
+  ).bind(offerId, fp).first<{ vote: number }>()
+
+  return c.json({ my_vote: row?.vote ?? 0 })
 })
 
 // GET /api/version — deployed commit SHA and build date
