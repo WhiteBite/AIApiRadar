@@ -12,33 +12,27 @@ import {
 import { fetchOffers, fetchModels, apiKeys } from "@/lib/api";
 import type { FetchOffersParams } from "@/lib/api";
 
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { OfferList } from "@/components/feed/offer-list";
 import { OfferDetail, OfferDetailEmpty } from "@/components/feed/offer-detail";
 import { MODEL_COLORS } from "@/lib/colors";
 import { useSaved } from "@/lib/saved";
 import { cn } from "@/lib/utils";
 
+// ── Constants ────────────────────────────────────────────────────────────────
+
 const DEFAULT_FILTERS: OffersFilters = {
-  tab: "all", q: "", minAmount: "", model: "", sort: "score", sinceHours: 24,
+  tab: "all", q: "", minAmount: "", model: "", sort: "newest", sinceHours: 24,
   sourceCategory: "", offerType: "", noReferral: false, engine: "",
 };
 
-const TABS: { value: FeedTab; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "easy", label: "🟢 Easy" },
-  { value: "medium", label: "🟡 Medium" },
-  { value: "hard", label: "🔴 Hard" },
-  { value: "dead", label: "💀 Dead" },
-  { value: "saved", label: "⭐" },
-];
-
-const SORT_OPTIONS = [
-  { value: "score", label: "Top" },
-  { value: "amount", label: "Amount" },
-  { value: "newest", label: "Newest" },
+const TABS: { value: FeedTab; label: string; dot?: string }[] = [
+  { value: "all", label: "Все" },
+  { value: "easy", label: "Easy", dot: "bg-emerald-400" },
+  { value: "medium", label: "Medium", dot: "bg-amber-400" },
+  { value: "hard", label: "Hard", dot: "bg-red-400" },
+  { value: "dead", label: "Dead" },
+  { value: "saved", label: "★" },
 ];
 
 const WINDOWS: { value: number | ""; label: string }[] = [
@@ -48,7 +42,13 @@ const WINDOWS: { value: number | ""; label: string }[] = [
   { value: "", label: "Всё" },
 ];
 
-// ── Reusable chip button ─────────────────────────────────────────────────────
+const SORT_SEG: { value: OffersFilters["sort"]; label: string; title: string }[] = [
+  { value: "newest", label: "Новые", title: "Сначала новые" },
+  { value: "score", label: "Топ", title: "По релевантности" },
+  { value: "amount", label: "$$$", title: "По сумме" },
+];
+
+// ── Chip ─────────────────────────────────────────────────────────────────────
 function Chip({
   active, onClick, children, color = "default",
 }: {
@@ -88,9 +88,11 @@ function activeFilterCount(f: OffersFilters) {
   if (f.engine) n++;
   if (f.noReferral) n++;
   if (f.model) n++;
+  if (f.sinceHours !== 24) n++;  // non-default window
   return n;
 }
 
+// ── Page ─────────────────────────────────────────────────────────────────────
 export default function FeedPage() {
   const [filters, setFilters] = useState<OffersFilters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -130,7 +132,6 @@ export default function FeedPage() {
 
   const offers = useMemo(() => {
     let list = data?.items ?? [];
-
     if (filters.tab === "saved") {
       const set = new Set(savedIds);
       list = list.filter((o: Offer) => set.has(o.id));
@@ -142,7 +143,6 @@ export default function FeedPage() {
     }
     if (filters.engine) list = list.filter((o: Offer) => o.engine === filters.engine);
     if (filters.noReferral) list = list.filter((o: Offer) => !o.referral_required);
-
     if (filters.sort === "newest") {
       list = [...list].sort((a, b) =>
         (b.first_seen_at ? Date.parse(b.first_seen_at) : 0) -
@@ -153,7 +153,7 @@ export default function FeedPage() {
     return list;
   }, [data, filters, savedIds, liveOnly]);
 
-  const selectedOffer: Offer | null = useMemo(
+  const selectedOffer = useMemo(
     () => offers.find((o: Offer) => o.id === selectedId) ?? null,
     [offers, selectedId]
   );
@@ -163,82 +163,111 @@ export default function FeedPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
-      {/* ── Row 1: tabs + window + filter toggle + search + sort ── */}
-      <div className="shrink-0 flex items-center gap-3 px-4 h-12 border-b border-zinc-800 bg-zinc-950">
-        <Tabs value={filters.tab} onValueChange={(t) => update({ tab: t as FeedTab })}>
-          <TabsList className="border-0 bg-transparent p-0 gap-1">
+      {/* ═══ TOOLBAR ═══════════════════════════════════════════════════════ */}
+      <div className="shrink-0 border-b border-zinc-800 bg-zinc-950">
+
+        {/* Row A: tabs + search + sort + filter btn + count */}
+        <div className="flex items-center gap-2 px-3 h-11">
+
+          {/* Effort / status tabs — compact pill style */}
+          <nav className="flex items-center gap-0.5 shrink-0">
             {TABS.map((t) => (
-              <TabsTrigger key={t.value} value={t.value}>{t.label}</TabsTrigger>
+              <button
+                key={t.value}
+                onClick={() => update({ tab: t.value })}
+                className={cn(
+                  "flex items-center gap-1.5 h-7 px-3 rounded-md text-[13px] font-medium transition-colors",
+                  filters.tab === t.value
+                    ? "bg-zinc-700 text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60"
+                )}
+              >
+                {t.dot && <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", t.dot)} />}
+                {t.label}
+              </button>
             ))}
-          </TabsList>
-        </Tabs>
+          </nav>
 
-        <div className="flex-1" />
+          <div className="w-px h-5 bg-zinc-800 shrink-0" />
 
-        {/* Freshness window */}
-        <div className="flex items-center gap-0.5 rounded-md border border-zinc-800 p-0.5">
-          {WINDOWS.map((w) => (
-            <button
-              key={String(w.value)}
-              onClick={() => update({ sinceHours: w.value })}
-              className={cn(
-                "h-7 px-2 rounded text-xs font-medium transition-colors",
-                filters.sinceHours === w.value
-                  ? "bg-zinc-700 text-zinc-100"
-                  : "text-zinc-500 hover:text-zinc-300"
-              )}
-            >
-              {w.label}
-            </button>
-          ))}
+          {/* Search — takes remaining space */}
+          <div className="relative flex-1 min-w-0 max-w-sm">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+            <Input
+              placeholder="Поиск по домену, шагам…"
+              value={filters.q}
+              onChange={(e) => update({ q: e.target.value })}
+              className="pl-8 h-8 text-[13px] bg-zinc-900 border-zinc-800 focus:border-zinc-600 w-full"
+            />
+            {filters.q && (
+              <button onClick={() => update({ q: "" })} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex-1" />
+
+          {/* Sort — visible segment control, not dropdown */}
+          <div className="flex items-center rounded-lg border border-zinc-800 overflow-hidden shrink-0">
+            {SORT_SEG.map(({ value, label, title }) => (
+              <button
+                key={value}
+                onClick={() => update({ sort: value })}
+                title={title}
+                className={cn(
+                  "h-8 px-3 text-[12px] font-medium transition-colors border-r last:border-r-0 border-zinc-800",
+                  filters.sort === value
+                    ? "bg-zinc-700 text-zinc-100"
+                    : "bg-transparent text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-300"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Filters toggle */}
+          <button
+            onClick={() => setShowFilters((v) => !v)}
+            title="Расширенные фильтры"
+            className={cn(
+              "h-8 px-2.5 rounded-lg border text-[13px] transition-colors shrink-0 flex items-center gap-1.5",
+              showFilters || numActive > 0
+                ? "border-blue-500/40 text-blue-300 bg-blue-500/10"
+                : "border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
+            )}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            {numActive > 0
+              ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-500 text-[10px] text-white font-bold">{numActive}</span>
+              : <span className="hidden sm:inline">Фильтры</span>
+            }
+          </button>
+
+          {/* Count */}
+          <span className="text-[12px] text-zinc-600 tabular-nums w-8 text-right shrink-0">
+            {isLoading ? "…" : offers.length}
+          </span>
         </div>
-
-        {/* Filter toggle button */}
-        <button
-          onClick={() => setShowFilters((v) => !v)}
-          className={cn(
-            "h-8 px-2.5 rounded-md border text-xs transition-colors shrink-0 flex items-center gap-1.5",
-            showFilters || numActive > 0
-              ? "border-blue-500/40 text-blue-300 bg-blue-500/10"
-              : "border-zinc-700 text-zinc-400 hover:text-zinc-200"
-          )}
-        >
-          <SlidersHorizontal className="w-3.5 h-3.5" />
-          Фильтры
-          {numActive > 0 && (
-            <span className="ml-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-500 text-[10px] text-white font-bold">
-              {numActive}
-            </span>
-          )}
-        </button>
-
-        {/* Search */}
-        <div className="relative w-40">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
-          <Input
-            placeholder="Поиск…"
-            value={filters.q}
-            onChange={(e) => update({ q: e.target.value })}
-            className="pl-8 h-8 text-xs"
-          />
-        </div>
-
-        <Select
-          value={filters.sort}
-          onChange={(v) => update({ sort: v as OffersFilters["sort"] })}
-          options={SORT_OPTIONS}
-          className="h-8 text-xs w-24"
-        />
-        <span className="text-[11px] text-zinc-600 tabular-nums w-10 text-right">
-          {isLoading ? "…" : offers.length}
-        </span>
       </div>
 
-      {/* ── Row 2: expandable filter panel ── */}
+      {/* ═══ FILTER PANEL (expandable) ════════════════════════════════════ */}
       {showFilters && (
         <div className="shrink-0 border-b border-zinc-800 bg-zinc-950/90 px-4 py-3 space-y-2.5">
 
-          {/* Source category */}
+          {/* Window */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] text-zinc-500 w-16 shrink-0">Период</span>
+            {WINDOWS.map((w) => (
+              <Chip key={String(w.value)} active={filters.sinceHours === w.value}
+                onClick={() => update({ sinceHours: w.value })}>
+                {w.label}
+              </Chip>
+            ))}
+          </div>
+
+          {/* Source */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[11px] text-zinc-500 w-16 shrink-0">Источник</span>
             {(Object.keys(SOURCE_CATEGORY_LABELS) as SourceCategory[]).map((cat) => (
@@ -249,12 +278,11 @@ export default function FeedPage() {
             ))}
           </div>
 
-          {/* Offer type */}
+          {/* Type */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[11px] text-zinc-500 w-16 shrink-0">Тип</span>
             {OFFER_TYPE_CHIPS.map(({ value, label }) => (
-              <Chip key={value}
-                active={filters.offerType === value}
+              <Chip key={value} active={filters.offerType === value}
                 onClick={() => update({ offerType: filters.offerType === value ? "" : value })}
                 color="violet">
                 {label}
@@ -262,33 +290,28 @@ export default function FeedPage() {
             ))}
           </div>
 
-          {/* Amount presets */}
+          {/* Amount */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[11px] text-zinc-500 w-16 shrink-0">Сумма</span>
             {AMOUNT_PRESETS.map(({ value, label }) => (
-              <Chip key={String(value)}
-                active={filters.minAmount === value}
-                onClick={() => update({ minAmount: value })}
-                color="emerald">
+              <Chip key={String(value)} active={filters.minAmount === value}
+                onClick={() => update({ minAmount: value })} color="emerald">
                 {label}
               </Chip>
             ))}
           </div>
 
-          {/* Engine + misc toggles */}
+          {/* Engine + toggles */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[11px] text-zinc-500 w-16 shrink-0">Движок</span>
             {ENGINE_CHIPS.map((e) => (
-              <Chip key={e}
-                active={filters.engine === e}
-                onClick={() => update({ engine: filters.engine === e ? "" : e })}
-                color="amber">
+              <Chip key={e} active={filters.engine === e}
+                onClick={() => update({ engine: filters.engine === e ? "" : e })} color="amber">
                 {e}
               </Chip>
             ))}
             <span className="mx-1 text-zinc-700">·</span>
-            <Chip active={filters.noReferral}
-              onClick={() => update({ noReferral: !filters.noReferral })}>
+            <Chip active={filters.noReferral} onClick={() => update({ noReferral: !filters.noReferral })}>
               без реферала
             </Chip>
             <Chip active={liveOnly} onClick={() => setLiveOnly((v) => !v)}>
@@ -296,66 +319,49 @@ export default function FeedPage() {
             </Chip>
           </div>
 
-          {/* Reset */}
           {numActive > 0 && (
-            <button
-              onClick={() => setFilters(DEFAULT_FILTERS)}
-              className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300"
-            >
-              <X className="w-3 h-3" /> Сбросить все фильтры
+            <button onClick={() => { setFilters(DEFAULT_FILTERS); setLiveOnly(false); }}
+              className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300">
+              <X className="w-3 h-3" /> Сбросить фильтры
             </button>
           )}
         </div>
       )}
 
-      {/* ── Row 3: model chips (always visible) ── */}
+      {/* ═══ MODEL CHIPS ══════════════════════════════════════════════════ */}
       {topModels.length > 0 && (
-        <div className="shrink-0 flex items-center gap-1.5 px-4 h-10 border-b border-zinc-800 bg-zinc-950 overflow-x-auto">
-          <span className="text-[11px] text-zinc-600 shrink-0 mr-0.5">Модель:</span>
+        <div className="shrink-0 flex items-center gap-1.5 px-3 h-9 border-b border-zinc-800 bg-zinc-950 overflow-x-auto">
+          <span className="text-[11px] text-zinc-600 shrink-0">Модель:</span>
           {topModels.map(({ model, count }) => {
             const active = filters.model === model;
             const color = MODEL_COLORS[model] ?? "bg-zinc-700/40 text-zinc-300 border-zinc-600";
             return (
-              <button
-                key={model}
-                onClick={() => toggleModel(model)}
+              <button key={model} onClick={() => toggleModel(model)}
                 className={cn(
-                  "shrink-0 inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-all",
-                  active
-                    ? color + " ring-1 ring-white/30"
-                    : "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
-                )}
-              >
+                  "shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] font-medium transition-all",
+                  active ? color + " ring-1 ring-white/30" : "border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
+                )}>
                 {model}
-                <span className="text-[10px] opacity-70 tabular-nums">{count}</span>
+                <span className="text-[10px] opacity-60 tabular-nums">{count}</span>
               </button>
             );
           })}
           {filters.model && (
-            <button onClick={() => update({ model: "" })}
-              className="shrink-0 text-[11px] text-zinc-500 hover:text-zinc-300 ml-1">
-              ✕
-            </button>
+            <button onClick={() => update({ model: "" })} className="shrink-0 text-[11px] text-zinc-500 hover:text-zinc-300 ml-1">✕</button>
           )}
         </div>
       )}
 
-      {/* ── Body: list + detail ── */}
+      {/* ═══ BODY ══════════════════════════════════════════════════════════ */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="w-[340px] xl:w-[380px] shrink-0 border-r border-zinc-800 overflow-y-auto">
-          <OfferList
-            offers={offers}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            isLoading={isLoading}
-          />
+          <OfferList offers={offers} selectedId={selectedId} onSelect={setSelectedId} isLoading={isLoading} />
         </div>
         <div className="flex-1 min-w-0 overflow-hidden p-3">
-          {selectedOffer ? (
-            <OfferDetail offer={selectedOffer} onClose={() => setSelectedId(null)} />
-          ) : (
-            <OfferDetailEmpty />
-          )}
+          {selectedOffer
+            ? <OfferDetail offer={selectedOffer} onClose={() => setSelectedId(null)} />
+            : <OfferDetailEmpty />
+          }
         </div>
       </div>
     </div>

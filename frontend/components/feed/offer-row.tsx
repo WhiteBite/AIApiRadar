@@ -4,6 +4,7 @@ import { cn, timeAgo, isWithinHours } from "@/lib/utils";
 import { fmtValue } from "@/lib/types";
 import type { Offer } from "@/lib/types";
 import { Favicon } from "@/components/ui/favicon";
+import { LikeButtons } from "@/components/ui/like-buttons";
 
 interface OfferRowProps {
   offer: Offer;
@@ -85,6 +86,7 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
           {src && <span className="text-zinc-700">·</span>}
           <span className="tabular-nums">{offer.first_seen_at ? timeAgo(offer.first_seen_at) : ""}</span>
         </span>
+        <LikeButtons offerId={offer.id} compact />
       </div>
     </button>
   );

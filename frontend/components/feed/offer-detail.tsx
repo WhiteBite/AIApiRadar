@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, ExternalLink, Radio, Star } from "lucide-react";
+import { LikeButtons } from "@/components/ui/like-buttons";
 import { cn, timeAgo, isWithinHours, scorePct } from "@/lib/utils";
 import { fmtValue, EFFORT_LABELS, EFFORT_EMOJI } from "@/lib/types";
 import type { Offer, Signal, ServiceStatus } from "@/lib/types";
@@ -311,6 +312,8 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
               Открыть оригинал
             </a>
           )}
+          <div className="flex-1" />
+          <LikeButtons offerId={offer.id} />
         </div>
       </div>
 
