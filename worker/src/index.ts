@@ -402,4 +402,50 @@ app.get('/api/offers/:id/my-vote', async (c) => {
 // GET /api/version — deployed commit SHA and build date
 app.get('/api/version', (c) => c.json({ version: VERSION, build_date: BUILD_DATE }))
 
+// ── App settings ──────────────────────────────────────────────────────────────
+// Default values mirror prefilter.py and scorer.py constants.
+const SETTINGS_DEFAULTS = {
+  prefilter_en_strong: [
+    "free credit", "free credits", "free trial", "free api", "free tier", "api trial",
+    "no credit card", "no card required", "sign up free", "register for free", "free access",
+    "free tokens", "free quota", "get free", "claim free", "free plan includes",
+    "promo code", "coupon code", "discount code", "use code", "free pro", "pro for free", "pro plan free",
+    "get it free", "access for free", "free with",
+  ],
+  prefilter_en_weak: ["credits", "sign up", "signup", "register", "redeem", "promo", "referral", "invite", "api key", "trial", "$"],
+  prefilter_ru: ["триал", "кредит", "бесплатн", "api ключ", "апи ключ", "регистрац", "раздач", "раздают", "баланс", "халяв", "промокод", "бонус"],
+  prefilter_zh_strong: ["注册送", "公益站", "中转站", "免费api", "白嫖", "送额度", "送余额", "送刀", "免费额度", "注册即送", "新用户送"],
+  prefilter_zh_weak: ["免费", "额度", "中转"],
+  score_w_freshness: 0.4,
+  score_w_amount: 0.3,
+  score_w_ease: 0.2,
+  score_w_reliability: 0.1,
+  early_signal_boost: 0.1,
+  discovery_limit: 40,
+  notify_min_score: 0.6,
+} as const
+
+// GET /api/settings — returns settings merged with defaults
+app.get('/api/settings', async (c) => {
+  const rows = await c.env.DB.prepare('SELECT key, value FROM app_settings').all<{ key: string; value: string }>()
+  const stored: Record<string, unknown> = {}
+  for (const r of rows.results ?? []) {
+    try { stored[r.key] = JSON.parse(r.value) } catch { stored[r.key] = r.value }
+  }
+  return c.json({ ...SETTINGS_DEFAULTS, ...stored })
+})
+
+// PATCH /api/settings — upsert one or more known keys
+app.patch('/api/settings', async (c) => {
+  const body = await c.req.json<Record<string, unknown>>()
+  const now = new Date().toISOString()
+  for (const [key, value] of Object.entries(body)) {
+    if (!(key in SETTINGS_DEFAULTS)) continue  // only allow known keys
+    await c.env.DB.prepare(
+      'INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)'
+    ).bind(key, JSON.stringify(value), now).run()
+  }
+  return c.json({ ok: true })
+})
+
 export default app

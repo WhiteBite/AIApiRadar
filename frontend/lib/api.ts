@@ -132,6 +132,7 @@ export const apiKeys = {
   analytics: () => ["analytics"] as const,
   collectors: () => ["collectors"] as const,
   keyStatus: () => ["key-status"] as const,
+  settings: () => ["settings"] as const,
 };
 
 export interface CollectorItem {
@@ -164,4 +165,29 @@ export async function patchCollector(
 
 export async function fetchKeyStatus(): Promise<KeyStatus[]> {
   return get<KeyStatus[]>('/api/keys');
+}
+
+// ── App settings ──────────────────────────────────────────────────────────────
+
+export interface AppSettings {
+  prefilter_en_strong: string[];
+  prefilter_en_weak: string[];
+  prefilter_ru: string[];
+  prefilter_zh_strong: string[];
+  prefilter_zh_weak: string[];
+  score_w_freshness: number;
+  score_w_amount: number;
+  score_w_ease: number;
+  score_w_reliability: number;
+  early_signal_boost: number;
+  discovery_limit: number;
+  notify_min_score: number;
+}
+
+export async function fetchSettings(): Promise<AppSettings> {
+  return get<AppSettings>('/api/settings');
+}
+
+export async function patchSettings(patch: Partial<AppSettings>): Promise<{ ok: boolean }> {
+  return mutate<{ ok: boolean }>('/api/settings', 'PATCH', patch);
 }
