@@ -28,6 +28,38 @@ const FORUM_SOURCES = new Set([
   "hackernews", "telegram", "youtube",
 ]);
 
+/** Human RU labels for offers.conditions.risk_flags */
+const RISK_FLAG_LABELS: Record<string, string> = {
+  vpn: "VPN",
+  fake_card: "Фейк-карта",
+  cancel_subscription: "Отмена подписки",
+  chargeback: "Chargeback",
+  referral: "Реф-ссылка",
+};
+
+/** Chip color tones — reuse the established badge palette (secondary text no darker than zinc-400). */
+const CHIP_TONES = {
+  green: "border-emerald-500/30 bg-emerald-500/15 text-emerald-300",
+  amber: "border-amber-500/30 bg-amber-500/15 text-amber-300",
+  zinc: "border-zinc-700 bg-zinc-800/60 text-zinc-400",
+  red: "border-red-500/30 bg-red-500/15 text-red-300",
+} as const;
+
+type ChipTone = keyof typeof CHIP_TONES;
+
+function ConditionChip({ tone, children }: { tone: ChipTone; children: React.ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium",
+        CHIP_TONES[tone]
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 export interface OfferDetailProps {
   offer: Offer;
   onClose?: () => void;
@@ -226,6 +258,31 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
 
   const requirements = offer.requirements?.trim();
 
+  // Structured offer conditions (#33) → compact chip row.
+  const conditions = offer.conditions ?? {};
+  const riskFlags = conditions.risk_flags ?? [];
+  const conditionChips: { key: string; tone: ChipTone; label: string }[] = [];
+  if (conditions.requires_card === false) {
+    conditionChips.push({ key: "no-card", tone: "green", label: "Без карты" });
+  }
+  if (conditions.requires_card === true) {
+    conditionChips.push({ key: "card", tone: "amber", label: "Нужна карта" });
+  }
+  if (conditions.requires_phone === true) {
+    conditionChips.push({ key: "phone", tone: "amber", label: "Нужен телефон/SMS" });
+  }
+  if (conditions.new_users_only === true) {
+    conditionChips.push({ key: "new-only", tone: "zinc", label: "Только новые" });
+  }
+  if (conditions.region) {
+    conditionChips.push({ key: "region", tone: "zinc", label: conditions.region });
+  }
+  for (const flag of riskFlags) {
+    // Avoid duplicating the referral chip when offer.referral_required already renders one.
+    if (flag === "referral" && offer.referral_required) continue;
+    conditionChips.push({ key: `risk-${flag}`, tone: "red", label: RISK_FLAG_LABELS[flag] ?? flag });
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50">
       {/* ── COMPACT HERO ── */}
@@ -418,11 +475,20 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
           </Section>
 
           {/* ТРЕБОВАНИЯ */}
-          {(requirements || offer.referral_required) && (
+          {(requirements || offer.referral_required || conditionChips.length > 0) && (
             <Section title="Требования">
               <div className="space-y-2">
                 {requirements && (
                   <p className="text-[13px] leading-relaxed text-zinc-300">{requirements}</p>
+                )}
+                {conditionChips.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {conditionChips.map((chip) => (
+                      <ConditionChip key={chip.key} tone={chip.tone}>
+                        {chip.label}
+                      </ConditionChip>
+                    ))}
+                  </div>
                 )}
                 {offer.referral_required && (
                   <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-300">

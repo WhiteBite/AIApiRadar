@@ -75,6 +75,7 @@ class Offer(Base):
     models: Mapped[Optional[list]] = mapped_column(JSON)
     claim_steps: Mapped[Optional[str]] = mapped_column(Text)
     requirements: Mapped[Optional[str]] = mapped_column(Text)
+    conditions: Mapped[Optional[dict]] = mapped_column(JSON)
     referral_required: Mapped[bool] = mapped_column(Boolean, default=False)
     effort: Mapped[Optional[str]] = mapped_column(String(16))
     unit: Mapped[Optional[str]] = mapped_column(String(16))

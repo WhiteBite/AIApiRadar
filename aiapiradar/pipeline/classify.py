@@ -33,6 +33,20 @@ _AMOUNT_RES = [
 ]
 _REFERRAL_RE = re.compile(r"[?&](ref|invite|aff|promo|campaignId)=|referral|реф[- ]?ссылк|invite", re.IGNORECASE)
 
+# Allowed risk-flag vocabulary for the structured `conditions` object.
+_RISK_FLAGS = ("vpn", "fake_card", "cancel_subscription", "chargeback", "referral")
+
+
+def _default_conditions() -> dict:
+    """Return a fresh default `conditions` object (all keys, safe defaults)."""
+    return {
+        "requires_card": False,
+        "requires_phone": False,
+        "new_users_only": False,
+        "region": None,
+        "risk_flags": [],
+    }
+
 
 class Classification(BaseModel):
     is_offer: bool = False
@@ -46,6 +60,7 @@ class Classification(BaseModel):
     referral_required: bool = False
     effort: Optional[str] = None   # "easy" / "medium" / "hard"
     unit: Optional[str] = None     # "usd" / "credits" / "days" / "months"
+    conditions: dict = Field(default_factory=dict)
     confidence: float = 0.0
 
     @classmethod
@@ -117,6 +132,91 @@ def _detect_unit(text: str, amount: Optional[float], currency: Optional[str]) ->
     return "usd" if currency else "credits"
 
 
+# Local keyword lists for structured `conditions` heuristics (no external calls).
+_CARD_KEYWORDS = [
+    "credit card", "debit card", "debit", "card required", "card", "карта",
+    "карту", "картой", "виза", "visa", "mastercard", "信用卡", "银行卡", "绑卡",
+]
+_PHONE_KEYWORDS = [
+    "phone verification", "phone number", "phone", "sms", "verify by sms",
+    "телефон", "смс", "номер телефона", "手机", "短信", "手机号", "手机验证",
+]
+_NEW_USER_KEYWORDS = [
+    "new users", "new user", "new account", "new accounts", "first deposit",
+    "только новые", "новым пользоват", "新用户", "首充", "首次充值", "新注册",
+]
+# Explicit "no card needed" phrasing — a POSITIVE signal (cardless), not a
+# requirement. Checked before _CARD_KEYWORDS so "no credit card" isn't misread
+# as "requires card" by the naive substring match.
+_NO_CARD_RE = re.compile(
+    r"no\s+(?:credit\s+|debit\s+)?card|without\s+(?:a\s+)?card|no\s+cc\b|"
+    r"card[-\s]?free|no\s+payment\s+(?:method|required)|"
+    r"без\s+карт|не\s+(?:нужн\w*|требу\w*|надо)\s+карт|"
+    r"无需(?:信用卡|绑卡)|不需要(?:信用卡|绑卡)|免绑卡|免信用卡",
+    re.IGNORECASE,
+)
+
+
+def _detect_conditions(text: str, url: Optional[str], referral_required: bool) -> dict:
+    """Best-effort structured conditions from text, reusing existing keyword lists.
+
+    Pure local string matching — no external calls. Returns the strict
+    `conditions` object (see _default_conditions()).
+    """
+    cond = _default_conditions()
+    low = text.lower()
+    blob = low + (" " + url.lower() if url else "")
+
+    # 3-state: assert only what we detect. Explicit "no card" → False (a
+    # positive selling point); a card keyword → True; neither → unknown (omit
+    # the key so the UI shows no chip rather than a misleading one).
+    if _NO_CARD_RE.search(blob):
+        cond["requires_card"] = False
+    elif any(k in low for k in _CARD_KEYWORDS):
+        cond["requires_card"] = True
+    else:
+        cond.pop("requires_card", None)
+
+    if any(k in low for k in _PHONE_KEYWORDS):
+        cond["requires_phone"] = True
+    else:
+        cond.pop("requires_phone", None)
+
+    if any(k in low for k in _NEW_USER_KEYWORDS):
+        cond["new_users_only"] = True
+    else:
+        cond.pop("new_users_only", None)
+
+    # Region: simple best-effort tags.
+    region = None
+    if "us only" in low or "us-only" in low or "сша только" in low:
+        region = "US-only"
+    elif "eu only" in low or "eu-only" in low:
+        region = "EU-only"
+    elif "cn only" in low or "cn-only" in low or "china only" in low:
+        region = "CN-only"
+    elif "region" in low or "only available in" in low:
+        region = "region-restricted"
+    cond["region"] = region
+
+    # Risk flags: map detected hard/medium keywords → controlled vocabulary.
+    flags: list[str] = []
+    if "vpn" in low or "впн" in low:
+        flags.append("vpn")
+    if any(k in low for k in ("fake card", "namso", "bin", "b1n", "генератор карт", "виртуальн")):
+        flags.append("fake_card")
+    if any(k in low for k in ("cancel subscription", "отменить", "cancel the subscription")):
+        flags.append("cancel_subscription")
+    if "chargeback" in low or "refund" in low or "возврат" in low:
+        flags.append("chargeback")
+    if referral_required or any(k in blob for k in ("referral", "ref=", "invite", "реф")):
+        flags.append("referral")
+    # dedupe, keep only allowed flags, preserve order
+    seen: set[str] = set()
+    cond["risk_flags"] = [f for f in flags if f in _RISK_FLAGS and not (f in seen or seen.add(f))]
+    return cond
+
+
 class HeuristicClassifier:
     name = "heuristic"
 
@@ -135,6 +235,7 @@ class HeuristicClassifier:
         name = domains[0] if domains else None
         effort = _detect_effort(text, referral)
         unit = _detect_unit(text, amount, currency)
+        cond = _detect_conditions(text, url, referral)
         return Classification(
             is_offer=True,
             service_name=name,
@@ -145,6 +246,7 @@ class HeuristicClassifier:
             referral_required=referral,
             effort=effort,
             unit=unit,
+            conditions=cond,
             confidence=min(confidence, 0.95),
         )
 
@@ -160,6 +262,9 @@ _LLM_SCHEMA = (
     '"claim_steps": str|null, "requirements": str|null, '
     '"referral_required": bool, '
     '"effort": "easy"|"medium"|"hard", "unit": "usd"|"credits"|"days"|"months"|null, '
+    '"conditions": {"requires_card": bool, "requires_phone": bool, '
+    '"new_users_only": bool, "region": str|null, '
+    '"risk_flags": [subset of "vpn"|"fake_card"|"cancel_subscription"|"chargeback"|"referral"]}, '
     '"confidence": number 0..1}'
 )
 _LLM_RULES = (
@@ -189,8 +294,31 @@ def _coerce_classification(data: dict) -> Classification:
         data["effort"] = None
     if data.get("unit") not in ("usd", "credits", "days", "months"):
         data["unit"] = None
+    data["conditions"] = _coerce_conditions(data.get("conditions"))
     data.pop("id", None)  # strip batch index if present
     return Classification(**data)
+
+
+def _coerce_conditions(raw) -> dict:
+    """Validate/normalize a raw `conditions` value into the strict object.
+
+    Missing/invalid input yields the safe default dict. Each key is coerced to
+    its declared type; unknown risk flags are dropped.
+    """
+    cond = _default_conditions()
+    if not isinstance(raw, dict):
+        return cond
+    for key in ("requires_card", "requires_phone", "new_users_only"):
+        if key in raw:
+            cond[key] = bool(raw[key])
+    region = raw.get("region")
+    cond["region"] = str(region) if isinstance(region, str) and region.strip() else None
+    flags = raw.get("risk_flags")
+    if isinstance(flags, (list, tuple)):
+        cond["risk_flags"] = [
+            str(f) for f in flags if isinstance(f, str) and f in _RISK_FLAGS
+        ]
+    return cond
 
 
 class LLMClassifier:

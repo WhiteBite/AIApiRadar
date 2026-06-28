@@ -9,6 +9,14 @@ export type EffortTier = "easy" | "medium" | "hard";
 export type AmountUnit = "usd" | "credits" | "days" | "months";
 export type SourceCategory = "forums" | "github" | "telegram" | "youtube" | "producthunt" | "catalogs";
 
+export interface OfferConditions {
+  requires_card?: boolean;
+  requires_phone?: boolean;
+  new_users_only?: boolean;
+  region?: string | null;
+  risk_flags?: string[];
+}
+
 export interface Offer {
   id: number;
   service_id: number;
@@ -22,6 +30,7 @@ export interface Offer {
   models: string[];
   claim_steps: string | null;
   requirements: string | null;
+  conditions: OfferConditions;
   description: string | null;
   referral_required: boolean;
   url: string | null;

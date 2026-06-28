@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS offers (
     models            TEXT,
     claim_steps       TEXT,
     requirements      TEXT,
+    conditions        TEXT,           -- JSON object (structured offer conditions)
     referral_required INTEGER NOT NULL DEFAULT 0,
     effort            TEXT,           -- easy / medium / hard
     unit              TEXT,           -- usd / credits / days / months

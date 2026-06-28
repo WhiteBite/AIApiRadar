@@ -71,6 +71,11 @@ jobs:
           python -m aiapiradar.cli reclassify --batch-size 20
           python -m aiapiradar.cli score
 
+      - name: Ensure offers.conditions in D1
+        continue-on-error: true
+        run: |
+          npx --yes wrangler@4 d1 execute aiapiradar --remote --command "ALTER TABLE offers ADD COLUMN conditions TEXT;"
+
       - name: Push local SQLite → D1
         run: |
           python -m aiapiradar.cli dump-sql --output seed.sql

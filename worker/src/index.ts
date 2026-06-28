@@ -32,6 +32,7 @@ function offerToDict(offer: Record<string, unknown>, domain: string | null) {
     models: parseJson(offer.models) || [],
     claim_steps: offer.claim_steps,
     requirements: offer.requirements,
+    conditions: parseJson(offer.conditions) || {},
     referral_required: Boolean(offer.referral_required),
     effort: offer.effort,
     unit: offer.unit,

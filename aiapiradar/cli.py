@@ -191,6 +191,8 @@ def cmd_reclassify(args: argparse.Namespace) -> None:
                 fields.append("requirements=?"); params.append(c.requirements)
             if c.models:
                 fields.append("models=?"); params.append(json_encode(c.models))
+            if c.conditions:
+                fields.append("conditions=?"); params.append(json_encode(c.conditions))
             fields.append("referral_required=?"); params.append(int(c.referral_required))
             if fields:
                 params.append(o["id"])

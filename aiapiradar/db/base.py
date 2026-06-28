@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS offers (
     models            TEXT,           -- JSON array
     claim_steps       TEXT,
     requirements      TEXT,
+    conditions        TEXT,           -- JSON object (structured offer conditions)
     referral_required INTEGER NOT NULL DEFAULT 0,
     effort            TEXT,           -- easy / medium / hard
     unit              TEXT,           -- usd / credits / days / months
@@ -213,6 +214,11 @@ def init_db() -> None:
                 "ALTER TABLE domain_candidates "
                 "ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'"
             )
+        except Exception:
+            pass  # column already exists — safe to ignore
+        # Migration 2: add conditions JSON column to offers (structured offer object).
+        try:
+            db.run("ALTER TABLE offers ADD COLUMN conditions TEXT")
         except Exception:
             pass  # column already exists — safe to ignore
         db.commit()

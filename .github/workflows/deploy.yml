@@ -92,6 +92,16 @@ jobs:
             d1 execute aiapiradar --remote --command
             "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT DEFAULT (datetime('now')));"
 
+      - name: Migrate offers.conditions in D1
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: >
+            d1 execute aiapiradar --remote --command
+            "ALTER TABLE offers ADD COLUMN conditions TEXT;"
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
