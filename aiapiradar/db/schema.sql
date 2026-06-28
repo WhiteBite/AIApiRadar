@@ -1,14 +1,17 @@
+-- AUTO-GENERATED from aiapiradar/db/base.py (SCHEMA_SQL).
+-- Do not edit by hand — regenerate with:  python -m scripts.gen_schema
+
 CREATE TABLE IF NOT EXISTS services (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     canonical_domain  TEXT    NOT NULL UNIQUE,
     name              TEXT,
     type              TEXT    NOT NULL DEFAULT 'other',
     engine            TEXT,
-    models            TEXT,
-    aliases           TEXT,
+    models            TEXT,           -- JSON array
+    aliases           TEXT,           -- JSON array of all hosts seen
     status            TEXT    NOT NULL DEFAULT 'new',
     reliability       REAL    NOT NULL DEFAULT 0.0,
-    domain_first_seen TEXT,
+    domain_first_seen TEXT,           -- ISO datetime
     first_seen        TEXT    NOT NULL DEFAULT (datetime('now')),
     last_checked      TEXT
 );
@@ -19,7 +22,7 @@ CREATE TABLE IF NOT EXISTS offers (
     type              TEXT    NOT NULL DEFAULT 'other',
     amount            REAL,
     currency          TEXT,
-    models            TEXT,
+    models            TEXT,           -- JSON array
     claim_steps       TEXT,
     requirements      TEXT,
     conditions        TEXT,           -- JSON object (structured offer conditions)
@@ -45,7 +48,7 @@ CREATE TABLE IF NOT EXISTS signals (
     url            TEXT,
     raw_text       TEXT,
     lang           TEXT,
-    classification TEXT,
+    classification TEXT,              -- JSON object
     confidence     REAL,
     observed_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE(source, source_url)
@@ -57,7 +60,7 @@ CREATE TABLE IF NOT EXISTS sources (
     type     TEXT    NOT NULL,
     enabled  INTEGER NOT NULL DEFAULT 1,
     last_run TEXT,
-    config   TEXT
+    config   TEXT                     -- JSON object
 );
 
 CREATE TABLE IF NOT EXISTS lead_metrics (
@@ -68,11 +71,6 @@ CREATE TABLE IF NOT EXISTS lead_metrics (
     lead_hours               REAL
 );
 
--- Discovery queue: every domain mentioned anywhere we listen becomes a
--- candidate here (harvested BEFORE the prefilter drop). The discovery worker
--- probes each one and promotes real AI services into `services`. This is how
--- we find brandable services (zenmux.ai, getmerlin.in) whose names contain no
--- AI keywords and so are invisible to certstream/crtsh domain-name matching.
 CREATE TABLE IF NOT EXISTS domain_candidates (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     domain        TEXT    NOT NULL UNIQUE,   -- registrable domain (eTLD+1)
@@ -82,20 +80,19 @@ CREATE TABLE IF NOT EXISTS domain_candidates (
     status        TEXT    NOT NULL DEFAULT 'pending',  -- pending/promoted/rejected/known
     probe_result  TEXT,                       -- JSON summary of the probe
     attempts      INTEGER NOT NULL DEFAULT 0,
-    priority      TEXT    NOT NULL DEFAULT 'normal'  -- normal / high (offer trigger within 100 chars)
+    priority      TEXT    NOT NULL DEFAULT 'normal'  -- normal / high (offer trigger nearby)
 );
 
--- Covering index for the discovery worker's hot query:
---   WHERE status='pending' AND attempts < N ORDER BY first_seen ASC LIMIT N
 CREATE INDEX IF NOT EXISTS idx_domain_candidates_status_attempts
     ON domain_candidates (status, attempts, first_seen);
 
--- Point lookup by domain (dedup inserts and known-service checks).
 CREATE INDEX IF NOT EXISTS idx_domain_candidates_domain
     ON domain_candidates (domain);
 
--- Votes: per-offer like/dislike, one vote per browser fingerprint (SHA-256 of IP+UA).
--- Shared across all visitors — anyone can see aggregated counts.
+CREATE INDEX IF NOT EXISTS idx_signals_source_source_url
+    ON signals (source, source_url);
+
+-- Votes: per-offer like/dislike, one vote per fingerprint (SHA-256 of IP+UA).
 CREATE TABLE IF NOT EXISTS votes (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   offer_id    INTEGER NOT NULL REFERENCES offers(id),

@@ -8,7 +8,8 @@
    ```
    Copy the `database_id` into `wrangler.toml`.
 
-2. Initialize schema:
+2. Initialize schema (`schema.sql` is auto-generated from `db/base.py` —
+   regenerate with `python -m scripts.gen_schema`, never edit it by hand):
    ```bash
    wrangler d1 execute aiapiradar --file=../aiapiradar/db/schema.sql
    ```
@@ -21,11 +22,13 @@
 
 ## GitHub Actions (collectors)
 
-Add these secrets to your GitHub repo:
+Add the repo secrets listed in `docs/discovery-sources.md` §13 (token registry).
+At minimum:
 - `CF_ACCOUNT_ID`
 - `CF_D1_DATABASE_ID`
 - `CF_API_TOKEN`
-- `LLM_API_KEY` (optional)
-- `TG_BOT_TOKEN` / `TG_CHAT_ID` (optional)
+
+All collector / LLM keys (`AIRADAR_*`) are optional — each source degrades to a
+graceful no-op (or the heuristic classifier) without its key.
 
 The collectors run every hour via `.github/workflows/collectors.yml`.
