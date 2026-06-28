@@ -50,25 +50,24 @@ def test_youtube_disabled_without_key(monkeypatch):
     assert list(asyncio.run(YouTubeCollector().collect())) == []
 
 
-def test_telegram_signal_is_aggregator_in_lead_metric(tmp_path, monkeypatch):
-    monkeypatch.setenv("AIRADAR_DB_URL", f"sqlite:///{tmp_path / 'p7.db'}")
-    import aiapiradar.config as config
-    import aiapiradar.db as db
-    config.get_settings.cache_clear()
-    db._engine = None
-    db._SessionFactory = None
-    db.init_db()
-
+def test_telegram_signal_is_aggregator_in_lead_metric(db_env):
     from aiapiradar.pipeline.pipeline import Pipeline
     from aiapiradar.pipeline.classify import HeuristicClassifier
-    from aiapiradar.models import LeadMetric, Offer
+    from aiapiradar.db import get_db
 
     tg = build_signal("freemodel.dev $300 free credits register https://freemodel.dev",
                       "kyloai", 1, dt.datetime(2026, 5, 13, tzinfo=dt.timezone.utc))
     Pipeline(classifier=HeuristicClassifier()).process_signals([tg])
 
-    with db.session_scope() as s:
-        offer = s.query(Offer).one()
-        lm = s.query(LeadMetric).filter_by(offer_id=offer.id).one()
-        assert lm.first_seen_in_aggregator is not None
-        assert lm.first_seen_by_us is None   # only aggregator saw it
+    with get_db() as db:
+        offers = db.execute("SELECT id FROM offers")
+        assert len(offers) == 1
+        lms = db.execute(
+            "SELECT first_seen_by_us, first_seen_in_aggregator "
+            "FROM lead_metrics WHERE offer_id = ?",
+            [offers[0]["id"]],
+        )
+        assert len(lms) == 1
+        lm = lms[0]
+        assert lm["first_seen_in_aggregator"] is not None
+        assert lm["first_seen_by_us"] is None   # only aggregator saw it

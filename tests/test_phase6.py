@@ -77,18 +77,10 @@ def test_coupon_parse():
     assert "20% off" in sigs[0].raw_text.lower() or "20% OFF" in sigs[0].raw_text
 
 
-def test_model_release_pipeline(tmp_path, monkeypatch):
-    monkeypatch.setenv("AIRADAR_DB_URL", f"sqlite:///{tmp_path / 'p6.db'}")
-    import aiapiradar.config as config
-    import aiapiradar.db as db
-    config.get_settings.cache_clear()
-    db._engine = None
-    db._SessionFactory = None
-    db.init_db()
-
+def test_model_release_pipeline(db_env):
     from aiapiradar.pipeline.pipeline import Pipeline
     from aiapiradar.pipeline.classify import HeuristicClassifier
-    from aiapiradar.models import Service, Offer
+    from aiapiradar.db import get_db
 
     hf_sigs = parse_models([{"id": "zai-org/GLM-5.2"}])
     pipe = Pipeline(classifier=HeuristicClassifier())
@@ -97,7 +89,15 @@ def test_model_release_pipeline(tmp_path, monkeypatch):
 
     # re-run: same model url -> no duplicate offer
     pipe.process_signals(parse_models([{"id": "zai-org/GLM-5.2"}]))
-    with db.session_scope() as s:
-        svc = s.query(Service).filter_by(canonical_domain="hf/zai-org").one()
-        assert svc.type == "model_release"
-        assert s.query(Offer).filter_by(service_id=svc.id).count() == 1
+    with get_db() as db:
+        svc = db.execute(
+            "SELECT id, type FROM services WHERE canonical_domain = ?",
+            ["hf/zai-org"],
+        )
+        assert len(svc) == 1
+        assert svc[0]["type"] == "model_release"
+        n_offers = db.execute(
+            "SELECT COUNT(*) AS n FROM offers WHERE service_id = ?",
+            [svc[0]["id"]],
+        )[0]["n"]
+        assert n_offers == 1

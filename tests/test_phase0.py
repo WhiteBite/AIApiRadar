@@ -30,24 +30,17 @@ def test_collector_registry_and_collect():
     assert signals[0].source == "dummy_test"
 
 
-def test_db_init_and_roundtrip(tmp_path, monkeypatch):
-    db_file = tmp_path / "test.db"
-    monkeypatch.setenv("AIRADAR_DB_URL", f"sqlite:///{db_file}")
+def test_db_init_and_roundtrip(db_env):
+    from aiapiradar.db import get_db
+    from tests.factories import make_service
 
-    # Reset cached settings/engine so the env override takes effect.
-    import aiapiradar.config as config
-    import aiapiradar.db as db
-    config.get_settings.cache_clear()
-    db._engine = None
-    db._SessionFactory = None
+    make_service("freemodel.dev", name="FreeModel", type="relay")
 
-    db.init_db()
-    from aiapiradar.models import Service
-
-    with db.session_scope() as session:
-        session.add(Service(canonical_domain="freemodel.dev", name="FreeModel", type="relay"))
-
-    with db.session_scope() as session:
-        svc = session.query(Service).filter_by(canonical_domain="freemodel.dev").one()
-        assert svc.name == "FreeModel"
-        assert svc.status == "new"
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT name, status FROM services WHERE canonical_domain = ?",
+            ["freemodel.dev"],
+        )
+    assert len(rows) == 1
+    assert rows[0]["name"] == "FreeModel"
+    assert rows[0]["status"] == "new"

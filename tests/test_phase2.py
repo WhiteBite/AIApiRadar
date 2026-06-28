@@ -75,19 +75,10 @@ def test_parse_listing_filters_self_and_social():
 
 
 # --- integration: collectors -> pipeline -> DB ----------------------------
-def test_collectors_into_pipeline(tmp_path, monkeypatch):
-    db_file = tmp_path / "p2.db"
-    monkeypatch.setenv("AIRADAR_DB_URL", f"sqlite:///{db_file}")
-    import aiapiradar.config as config
-    import aiapiradar.db as db
-    config.get_settings.cache_clear()
-    db._engine = None
-    db._SessionFactory = None
-    db.init_db()
-
+def test_collectors_into_pipeline(db_env):
+    from aiapiradar.db import get_db
     from aiapiradar.pipeline.pipeline import Pipeline
     from aiapiradar.pipeline.classify import HeuristicClassifier
-    from aiapiradar.models import Service, Offer
 
     pipe = Pipeline(classifier=HeuristicClassifier())
 
@@ -101,8 +92,11 @@ def test_collectors_into_pipeline(tmp_path, monkeypatch):
     stats = pipe.process_signals([*forum_sigs, *dir_sigs, candidate])
 
     assert stats.get("candidates", 0) == 1  # certstream seeded a service, no offer
-    with db.session_scope() as s:
+    with get_db() as db:
         # coolnewtool ($50 offer) + swiftrouter (candidate) -> >= 2 services
-        assert s.query(Service).count() >= 2
-        assert s.query(Offer).count() >= 1
-        assert s.query(Service).filter_by(canonical_domain="swiftrouter.com").one()
+        assert db.execute("SELECT COUNT(*) AS n FROM services")[0]["n"] >= 2
+        assert db.execute("SELECT COUNT(*) AS n FROM offers")[0]["n"] >= 1
+        assert db.execute(
+            "SELECT COUNT(*) AS n FROM services WHERE canonical_domain = ?",
+            ["swiftrouter.com"],
+        )[0]["n"] == 1

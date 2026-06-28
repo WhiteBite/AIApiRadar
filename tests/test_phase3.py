@@ -79,57 +79,48 @@ def test_probe_and_crtsh():
 
 
 # --- enrich_service + scorer over temp DB ---------------------------------
-def _reset_db(tmp_path, monkeypatch, name="p3.db"):
-    monkeypatch.setenv("AIRADAR_DB_URL", f"sqlite:///{tmp_path / name}")
-    import aiapiradar.config as config
-    import aiapiradar.db as db
-    config.get_settings.cache_clear()
-    db._engine = None
-    db._SessionFactory = None
-    db.init_db()
-    return db
+def test_enrich_service_updates_fields(db_env):
+    from aiapiradar.db import get_db
+    from tests.factories import make_service
 
-
-def test_enrich_service_updates_fields(tmp_path, monkeypatch):
-    db = _reset_db(tmp_path, monkeypatch)
-    from aiapiradar.models import Service
-
-    with db.session_scope() as s:
-        s.add(Service(canonical_domain="freemodel.dev", name="FreeModel", type="relay"))
+    service_id = make_service("freemodel.dev", name="FreeModel", type="relay")
 
     async def run():
         transport = httpx.MockTransport(_handler)
         async with httpx.AsyncClient(transport=transport) as client:
-            with db.session_scope() as s:
-                svc = s.query(Service).filter_by(canonical_domain="freemodel.dev").one()
-                await enrich_service(s, svc, client)
+            with get_db() as db:
+                await enrich_service(db, service_id, client)
 
     asyncio.run(run())
-    with db.session_scope() as s:
-        svc = s.query(Service).filter_by(canonical_domain="freemodel.dev").one()
-        assert svc.status == "active"
-        assert svc.engine == "new-api"
-        assert svc.domain_first_seen is not None
-        assert svc.reliability > 0.8
+    with get_db() as db:
+        svc = db.execute(
+            "SELECT status, engine, domain_first_seen, reliability "
+            "FROM services WHERE canonical_domain = ?",
+            ["freemodel.dev"],
+        )[0]
+    assert svc["status"] == "active"
+    assert svc["engine"] == "new-api"
+    assert svc["domain_first_seen"] is not None
+    assert svc["reliability"] > 0.8
 
 
-def test_rescore_orders_offers(tmp_path, monkeypatch):
-    db = _reset_db(tmp_path, monkeypatch, name="p3b.db")
-    from aiapiradar.models import Service, Offer, utcnow
+def test_rescore_orders_offers(db_env):
+    import datetime as dt
 
-    with db.session_scope() as s:
-        svc = Service(canonical_domain="x.ai", reliability=0.5)
-        s.add(svc)
-        s.flush()
-        now = utcnow()
-        big = Offer(service_id=svc.id, type="saas_trial", amount=200, first_seen_at=now)
-        small_old = Offer(service_id=svc.id, type="grant", amount=10,
-                          first_seen_at=now - dt.timedelta(hours=72), referral_required=True)
-        s.add_all([big, small_old])
+    from aiapiradar.db import get_db
+    from aiapiradar.models import utcnow
+    from tests.factories import make_offer, make_service
 
-    with db.session_scope() as s:
-        n = rescore_all(s)
+    svc_id = make_service("x.ai", type="other", reliability=0.5)
+    now = utcnow()
+    make_offer(svc_id, type="saas_trial", amount=200, first_seen_at=now)
+    make_offer(svc_id, type="grant", amount=10,
+               first_seen_at=now - dt.timedelta(hours=72), referral_required=True)
+
+    with get_db() as db:
+        n = rescore_all(db)
         assert n == 2
-        offers = {o.type: o.score for o in s.query(Offer).all()}
-        assert offers["saas_trial"] > offers["grant"]
-        assert all(0.0 <= v <= 1.0 for v in offers.values())
+        offers = {r["type"]: r["score"]
+                  for r in db.execute("SELECT type, score FROM offers")}
+    assert offers["saas_trial"] > offers["grant"]
+    assert all(0.0 <= v <= 1.0 for v in offers.values())

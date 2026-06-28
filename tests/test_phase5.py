@@ -9,17 +9,6 @@ import httpx
 from aiapiradar.pipeline.store import compute_lead_hours
 
 
-def _reset_db(tmp_path, monkeypatch, name="p5.db"):
-    monkeypatch.setenv("AIRADAR_DB_URL", f"sqlite:///{tmp_path / name}")
-    import aiapiradar.config as config
-    import aiapiradar.db as db
-    config.get_settings.cache_clear()
-    db._engine = None
-    db._SessionFactory = None
-    db.init_db()
-    return db
-
-
 # --- lead metrics ----------------------------------------------------------
 def test_compute_lead_hours():
     us = dt.datetime(2026, 4, 30, 12, 0, 0)
@@ -29,12 +18,11 @@ def test_compute_lead_hours():
     assert compute_lead_hours(None, agg) is None
 
 
-def test_lead_metric_recorded_via_pipeline(tmp_path, monkeypatch):
-    db = _reset_db(tmp_path, monkeypatch)
+def test_lead_metric_recorded_via_pipeline(db_env):
     from aiapiradar.pipeline.pipeline import Pipeline
     from aiapiradar.pipeline.classify import HeuristicClassifier
     from aiapiradar.core.signal import Signal
-    from aiapiradar.models import LeadMetric, Offer
+    from aiapiradar.db import get_db
 
     pipe = Pipeline(classifier=HeuristicClassifier())
     t0 = dt.datetime(2026, 4, 30, 12, 0, 0, tzinfo=dt.timezone.utc)
@@ -46,30 +34,40 @@ def test_lead_metric_recorded_via_pipeline(tmp_path, monkeypatch):
                  url="https://freemodel.dev", source_url="https://t.me/c/1", observed_at=t1)
     pipe.process_signals([ours, agg])
 
-    with db.session_scope() as s:
-        offer = s.query(Offer).one()
-        lm = s.query(LeadMetric).filter_by(offer_id=offer.id).one()
-        assert lm.first_seen_by_us is not None
-        assert lm.first_seen_in_aggregator is not None
-        assert lm.lead_hours == 13 * 24.0  # we were 13 days earlier
+    with get_db() as db:
+        offers = db.execute("SELECT id FROM offers")
+        assert len(offers) == 1
+        lms = db.execute(
+            "SELECT first_seen_by_us, first_seen_in_aggregator, lead_hours "
+            "FROM lead_metrics WHERE offer_id = ?",
+            [offers[0]["id"]],
+        )
+        assert len(lms) == 1
+        lm = lms[0]
+        assert lm["first_seen_by_us"] is not None
+        assert lm["first_seen_in_aggregator"] is not None
+        assert lm["lead_hours"] == 13 * 24.0  # we were 13 days earlier
 
 
 # --- notifier --------------------------------------------------------------
-def test_notifier_sends_once(tmp_path, monkeypatch):
+def test_notifier_sends_once(db_env, monkeypatch):
+    import aiapiradar.config as config
+
     monkeypatch.setenv("AIRADAR_TG_BOT_TOKEN", "test-token")
     monkeypatch.setenv("AIRADAR_TG_CHAT_ID", "123")
     monkeypatch.setenv("AIRADAR_NOTIFY_MIN_SCORE", "0.6")
-    db = _reset_db(tmp_path, monkeypatch, name="p5n.db")
+    # db_env already populated the settings cache during init_db (before these
+    # TG vars existed); clear it so the notifier reads the now-set credentials.
+    config.get_settings.cache_clear()
 
-    from aiapiradar.models import Service, Offer, utcnow
-    with db.session_scope() as s:
-        svc = Service(canonical_domain="freemodel.dev", name="FreeModel", type="relay", status="active")
-        s.add(svc)
-        s.flush()
-        s.add(Offer(service_id=svc.id, type="relay", amount=300, currency="USD",
-                    models=["gpt"], score=0.9, first_seen_at=utcnow()))   # above threshold
-        s.add(Offer(service_id=svc.id, type="saas_trial", amount=5, score=0.2,
-                    first_seen_at=utcnow()))                              # below threshold
+    from aiapiradar.models import utcnow
+    from tests.factories import make_offer, make_service
+
+    svc = make_service("freemodel.dev", name="FreeModel", type="relay", status="active")
+    make_offer(svc, type="relay", amount=300, currency="USD", models=["gpt"],
+               score=0.9, first_seen_at=utcnow())    # above threshold
+    make_offer(svc, type="saas_trial", amount=5, score=0.2,
+               first_seen_at=utcnow())               # below threshold
 
     sent_payloads = []
 
@@ -94,9 +92,11 @@ def test_notifier_sends_once(tmp_path, monkeypatch):
     assert n2 == 0
 
 
-def test_notifier_disabled_without_token(tmp_path, monkeypatch):
+def test_notifier_disabled_without_token(db_env, monkeypatch):
+    import aiapiradar.config as config
+
     monkeypatch.delenv("AIRADAR_TG_BOT_TOKEN", raising=False)
     monkeypatch.delenv("AIRADAR_TG_CHAT_ID", raising=False)
-    _reset_db(tmp_path, monkeypatch, name="p5d.db")
+    config.get_settings.cache_clear()
     from aiapiradar.notifier import notify_new_offers
     assert asyncio.run(notify_new_offers()) == 0

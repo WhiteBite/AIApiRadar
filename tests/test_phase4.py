@@ -6,29 +6,24 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("AIRADAR_DB_URL", f"sqlite:///{tmp_path / 'p4.db'}")
-    import aiapiradar.config as config
-    import aiapiradar.db as db
-    config.get_settings.cache_clear()
-    db._engine = None
-    db._SessionFactory = None
-    db.init_db()
+def client(db_env):
+    from aiapiradar.db import get_db
+    from aiapiradar.models import utcnow
+    from tests.factories import make_offer, make_service
 
-    from aiapiradar.models import Service, Offer, utcnow
-    with db.session_scope() as s:
-        svc = Service(canonical_domain="freemodel.dev", name="FreeModel", type="relay",
-                      status="active", reliability=0.9, engine="new-api")
-        s.add(svc)
-        s.flush()
-        s.add(Offer(service_id=svc.id, type="relay", amount=300, currency="USD",
-                    models=["gpt", "claude"], claim_steps="Sign up, get key.",
-                    url="https://freemodel.dev", score=0.82, first_seen_at=utcnow()))
-        svc2 = Service(canonical_domain="tiny.ai", name="Tiny", type="saas_trial", status="dead")
-        s.add(svc2)
-        s.flush()
-        s.add(Offer(service_id=svc2.id, type="saas_trial", amount=5, score=0.1,
-                    first_seen_at=utcnow()))
+    svc1 = make_service("freemodel.dev", name="FreeModel", type="relay",
+                        status="active", reliability=0.9, engine="new-api")
+    offer1 = make_offer(svc1, type="relay", amount=300, currency="USD",
+                        models=["gpt", "claude"], score=0.82,
+                        url="https://freemodel.dev", first_seen_at=utcnow())
+    # claim_steps is not a factory column; set it directly so the detail page's
+    # "How to claim" section (asserted in test_dashboard_and_detail_html) renders.
+    with get_db() as db:
+        db.run("UPDATE offers SET claim_steps = ? WHERE id = ?",
+               ["Sign up, get key.", offer1])
+
+    svc2 = make_service("tiny.ai", name="Tiny", type="saas_trial", status="dead")
+    make_offer(svc2, type="saas_trial", amount=5, score=0.1, first_seen_at=utcnow())
 
     from aiapiradar.web import create_app
     return TestClient(create_app())
