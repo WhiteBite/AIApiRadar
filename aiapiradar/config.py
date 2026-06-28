@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -131,6 +131,20 @@ class Settings(BaseSettings):
     @property
     def has_llm(self) -> bool:
         return len(self.llm_providers) > 0
+
+    @field_validator("tg_api_id", mode="before")
+    @classmethod
+    def _coerce_empty_int(cls, v):
+        """Tolerate an unset env var for an int field.
+
+        In CI we map `AIRADAR_TG_API_ID: ${{ secrets.AIRADAR_TG_API_ID }}`; when
+        the secret is unset the env value is an empty string `""`, which pydantic
+        cannot parse as int and would otherwise crash the ENTIRE app at startup
+        (every collector/CLI call builds Settings). Treat ""/None as the 0 default.
+        """
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            return 0
+        return v
 
     @property
     def llm_model_chain(self) -> list[str]:

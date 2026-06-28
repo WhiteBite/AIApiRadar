@@ -37,7 +37,7 @@ jobs:
       AIRADAR_TW_BEARER_TOKEN: ${{ secrets.AIRADAR_TW_BEARER_TOKEN }}
       AIRADAR_FOFA_KEY: ${{ secrets.AIRADAR_FOFA_KEY }}
       AIRADAR_FOFA_EMAIL: ${{ secrets.AIRADAR_FOFA_EMAIL }}
-      AIRADAR_TG_API_ID: ${{ secrets.AIRADAR_TG_API_ID }}
+      AIRADAR_TG_API_ID: ${{ secrets.AIRADAR_TG_API_ID || '0' }}
       AIRADAR_TG_API_HASH: ${{ secrets.AIRADAR_TG_API_HASH }}
       # LLM provider keys (multi-provider fallback chain). Empty = skipped.
       AIRADAR_LLM_API_KEY: ${{ secrets.AIRADAR_LLM_API_KEY }}

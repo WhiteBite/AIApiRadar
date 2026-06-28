@@ -24,8 +24,10 @@ def test_telegram_build_signal():
 
 
 def test_telegram_disabled_without_creds(monkeypatch):
-    monkeypatch.delenv("AIRADAR_TG_API_ID", raising=False)
-    monkeypatch.delenv("AIRADAR_TG_API_HASH", raising=False)
+    # setenv("") overrides any .env-file value (env > .env in pydantic-settings),
+    # so the test is hermetic regardless of the developer's local .env.
+    monkeypatch.setenv("AIRADAR_TG_API_ID", "")
+    monkeypatch.setenv("AIRADAR_TG_API_HASH", "")
     import aiapiradar.config as config
     config.get_settings.cache_clear()
     assert TelegramCollector.configured() is False
@@ -44,7 +46,8 @@ def test_youtube_parse():
 
 
 def test_youtube_disabled_without_key(monkeypatch):
-    monkeypatch.delenv("AIRADAR_YOUTUBE_API_KEY", raising=False)
+    # setenv("") overrides any .env-file value so the test stays hermetic.
+    monkeypatch.setenv("AIRADAR_YOUTUBE_API_KEY", "")
     import aiapiradar.config as config
     config.get_settings.cache_clear()
     assert list(asyncio.run(YouTubeCollector().collect())) == []
