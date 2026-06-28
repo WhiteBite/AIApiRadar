@@ -5,11 +5,15 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.11.1",
     "typescript": "^5.5.2",
+    "vitest": "^4.1.9",
     "wrangler": "^3.95.0"
   },
   "dependencies": {
