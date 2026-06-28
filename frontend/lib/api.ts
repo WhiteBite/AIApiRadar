@@ -104,6 +104,7 @@ export interface Analytics {
     count_total: number;
   };
   by_source: Array<{ source: string; count: number }>;
+  source_leaderboard?: { source: string; avg_lead_hours: number; count_total: number; count_ahead: number }[];
   with_description: number;
   offers_total: number;
 }

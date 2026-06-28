@@ -191,7 +191,7 @@ app.get('/api/stats', async (c) => {
 
 // GET /api/analytics
 app.get('/api/analytics', async (c) => {
-  const [leadRows, bySourceRows, descCount, totalCount] = await Promise.all([
+  const [leadRows, bySourceRows, descCount, totalCount, leaderboardRows] = await Promise.all([
     c.env.DB.prepare(
       'SELECT lead_hours FROM lead_metrics WHERE lead_hours IS NOT NULL ORDER BY lead_hours'
     ).all<{ lead_hours: number }>(),
@@ -204,6 +204,23 @@ app.get('/api/analytics', async (c) => {
     c.env.DB.prepare(
       'SELECT COUNT(*) as c FROM offers'
     ).first<{ c: number }>(),
+    // Source-attribution scoreboard: which FIRST source (earliest signal)
+    // gives offers the biggest lead over Telegram aggregators.
+    c.env.DB.prepare(`
+      SELECT first_src AS source,
+             ROUND(AVG(lead_hours), 2) AS avg_lead,
+             COUNT(*) AS total,
+             SUM(CASE WHEN lead_hours > 0 THEN 1 ELSE 0 END) AS ahead
+      FROM (
+        SELECT lm.lead_hours AS lead_hours,
+               (SELECT source FROM signals WHERE offer_id = lm.offer_id ORDER BY observed_at ASC LIMIT 1) AS first_src
+        FROM lead_metrics lm
+        WHERE lm.lead_hours IS NOT NULL
+      )
+      WHERE first_src IS NOT NULL
+      GROUP BY first_src
+      ORDER BY avg_lead DESC
+    `).all<{ source: string; avg_lead: number; total: number; ahead: number }>(),
   ])
 
   const leadValues = (leadRows.results as { lead_hours: number }[]).map(r => r.lead_hours)
@@ -233,6 +250,13 @@ app.get('/api/analytics', async (c) => {
     count: r.cnt,
   }))
 
+  const source_leaderboard = (leaderboardRows.results as { source: string; avg_lead: number; total: number; ahead: number }[]).map(r => ({
+    source: r.source,
+    avg_lead_hours: r.avg_lead,
+    count_total: r.total,
+    count_ahead: r.ahead,
+  }))
+
   return c.json({
     lead_time: {
       avg_hours,
@@ -241,6 +265,7 @@ app.get('/api/analytics', async (c) => {
       count_total,
     },
     by_source,
+    source_leaderboard,
     with_description: descCount?.c ?? 0,
     offers_total: totalCount?.c ?? 0,
   })

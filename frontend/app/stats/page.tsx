@@ -248,6 +248,42 @@ export default function StatsPage() {
           )}
         </section>
 
+        {/* Source attribution scoreboard · lead-time */}
+        <section>
+          <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest mb-4">
+            Лидерборд источников · lead-time
+          </h2>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-3">
+            {(analytics?.source_leaderboard ?? []).length === 0 ? (
+              <p className="text-sm text-zinc-400">
+                Пока нет данных — нужен Telegram ingest для замера lead-time.
+              </p>
+            ) : (
+              (analytics?.source_leaderboard ?? []).map((row) => (
+                <div
+                  key={row.source}
+                  className="flex items-center gap-3"
+                >
+                  <span className="text-sm text-zinc-300 flex-1 truncate capitalize">
+                    {row.source}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-sm font-medium tabular-nums w-20 text-right shrink-0",
+                      row.avg_lead_hours > 0 ? "text-emerald-400" : "text-zinc-400"
+                    )}
+                  >
+                    {formatHours(row.avg_lead_hours)}
+                  </span>
+                  <span className="text-xs text-zinc-400 tabular-nums w-16 text-right shrink-0">
+                    {row.count_ahead}/{row.count_total}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
         {/* Sources breakdown */}
         <section>
           <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest mb-4">

@@ -251,7 +251,7 @@ async def run_discovery(
             When ``budget is None`` behaviour is identical to before.
     """
     stats = {"probed": 0, "promoted": 0, "rejected": 0, "skipped": 0,
-             "linkgraph_added": 0}
+             "linkgraph_added": 0, "retired": 0}
 
     # Budget shrinks the fetch window (smaller of limit / max_probes) and arms
     # the optional wall-clock soft cap. Without a budget nothing changes.
@@ -368,6 +368,30 @@ async def run_discovery(
                     )
                 except Exception:
                     log.debug("link-graph harvesting failed", exc_info=False)
+
+        # Retire exhausted candidates so the 'pending' set can't grow without
+        # bound. A candidate that used up all its retries (attempts >=
+        # max_attempts) is already excluded from the hot query (WHERE attempts
+        # < ?) yet stays 'pending' forever — a firehose source (e.g. all-zone
+        # CT) could bloat the table and slow every future dequeue. Flip those to
+        # 'rejected'. Fully guarded: best-effort, never raises, never touches
+        # promotion/link-graph state, and is a no-op when nothing is exhausted.
+        try:
+            exhausted = db.execute(
+                "SELECT COUNT(*) AS n FROM domain_candidates "
+                "WHERE status = 'pending' AND attempts >= ?",
+                [max_attempts],
+            )
+            n = int(exhausted[0]["n"]) if exhausted else 0
+            if n:
+                db.run(
+                    "UPDATE domain_candidates SET status='rejected' "
+                    "WHERE status='pending' AND attempts >= ?",
+                    [max_attempts],
+                )
+                stats["retired"] = n
+        except Exception:
+            log.debug("retiring exhausted candidates failed", exc_info=False)
 
         db.commit()
 
