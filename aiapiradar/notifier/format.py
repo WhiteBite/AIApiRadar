@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..models import Offer, Service
-
 # ── Forum topic taxonomy ───────────────────────────────────────────────────
 TOPIC_AI = "ai_services"
 TOPIC_FREEBIE = "freebies"
@@ -32,7 +30,7 @@ _FREEBIE_KEYWORDS = (
 
 
 # ── Formatting ─────────────────────────────────────────────────────────────
-def format_offer(offer: Offer, service: Optional[Service]) -> str:
+def format_offer(offer, service) -> str:
     head = service.canonical_domain if service else (offer.url or "offer")
     amt = f"{offer.currency or '$'}{int(offer.amount)}" if offer.amount else "?"
     effort = f" \u00b7 {offer.effort}" if offer.effort else ""
@@ -51,12 +49,12 @@ def format_offer(offer: Offer, service: Optional[Service]) -> str:
     return "\n".join(lines)
 
 
-def _best_text(offer: Offer) -> str:
+def _best_text(offer) -> str:
     texts = [s.raw_text for s in offer.signals if s.raw_text]
     return max(texts, key=len) if texts else ""
 
 
-def format_forwarded(offer: Offer, service: Optional[Service], channel: Optional[str]) -> str:
+def format_forwarded(offer, service, channel: Optional[str]) -> str:
     """Repost of a message picked up from another telegram channel.
 
     The bot can't natively forward (the channels are read via a user client it
@@ -79,14 +77,14 @@ def _channel_from_url(url: Optional[str]) -> Optional[str]:
     return None
 
 
-def _source_url(offer: Offer) -> Optional[str]:
+def _source_url(offer) -> Optional[str]:
     for sig in offer.signals:
         if sig.source_url:
             return sig.source_url
     return None
 
 
-def telegram_channel(offer: Offer) -> Optional[str]:
+def telegram_channel(offer) -> Optional[str]:
     """Channel name if any signal came from a telegram channel, else None."""
     for sig in offer.signals:
         if (sig.source or "").startswith("telegram"):
@@ -94,12 +92,12 @@ def telegram_channel(offer: Offer) -> Optional[str]:
     return None
 
 
-def offer_confidence(offer: Offer) -> float:
+def offer_confidence(offer) -> float:
     vals = [s.confidence for s in offer.signals if s.confidence is not None]
     return max(vals) if vals else 0.0
 
 
-def route_topic(offer: Offer, service: Optional[Service], from_telegram: bool) -> str:
+def route_topic(offer, service, from_telegram: bool) -> str:
     if from_telegram:
         return TOPIC_FORWARDED
     # Prefer the classifier's topic (LLM or heuristic) when present.
