@@ -127,17 +127,18 @@ def _get_or_create_offer(
                 offer_id,
             ],
         )
-        # Backfill effort/unit if still NULL
-        if clf.effort or clf.unit:
+        # Backfill effort/unit/topic if still NULL (don't clobber LLM values).
+        if clf.effort or clf.unit or clf.topic:
             db.run(
-                "UPDATE offers SET effort=?, unit=? WHERE id=? AND (effort IS NULL OR unit IS NULL)",
-                [clf.effort, clf.unit, offer_id],
+                "UPDATE offers SET effort=COALESCE(effort, ?), unit=COALESCE(unit, ?), "
+                "topic=COALESCE(topic, ?) WHERE id=?",
+                [clf.effort, clf.unit, clf.topic, offer_id],
             )
         return offer_id, False
     db.run(
         "INSERT INTO offers (service_id, type, amount, currency, models, "
-        "claim_steps, requirements, referral_required, url, effort, unit) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "claim_steps, requirements, referral_required, url, effort, unit, topic) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             service_id,
             clf.offer_type,
@@ -150,6 +151,7 @@ def _get_or_create_offer(
             url,
             clf.effort,
             clf.unit,
+            clf.topic,
         ],
     )
     offer_id = db.execute("SELECT last_insert_rowid() AS id")[0]["id"]

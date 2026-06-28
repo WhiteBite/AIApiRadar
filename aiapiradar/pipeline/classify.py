@@ -60,6 +60,7 @@ class Classification(BaseModel):
     referral_required: bool = False
     effort: Optional[str] = None   # "easy" / "medium" / "hard"
     unit: Optional[str] = None     # "usd" / "credits" / "days" / "months"
+    topic: Optional[str] = None    # "ai_service" / "freebie" (telegram notify routing)
     conditions: dict = Field(default_factory=dict)
     confidence: float = 0.0
 
@@ -105,6 +106,23 @@ _MEDIUM_KEYWORDS = [
     "промокод", "promo code", "coupon", "business email", "бизнес почт",
     ".edu", "edu email",
 ]
+
+# Topic routing for the Telegram forum notifier. "freebie" = promos / freebies /
+# infra (free VDS, credits, coupons); everything else is an AI service/agent.
+OFFER_TOPICS = ("ai_service", "freebie")
+_FREEBIE_TOPIC_KEYWORDS = [
+    "vds", "vps", "vpn", "хостинг", "hosting", "сервер", "server", "домен",
+    "domain", "ssl", "диск", "storage", "облак", "cloud credit", "free tier",
+    "бесплатн", "халяв", "промокод", "promo code", "coupon", "купон", "скидк",
+]
+
+
+def _guess_topic(text: str, offer_type: str) -> str:
+    """Heuristic topic: freebie/promo/infra vs AI-service."""
+    low = text.lower()
+    if offer_type in ("saas_promo", "grant") or any(k in low for k in _FREEBIE_TOPIC_KEYWORDS):
+        return "freebie"
+    return "ai_service"
 
 
 def _detect_effort(text: str, referral_required: bool) -> str:
@@ -236,16 +254,18 @@ class HeuristicClassifier:
         effort = _detect_effort(text, referral)
         unit = _detect_unit(text, amount, currency)
         cond = _detect_conditions(text, url, referral)
+        offer_type = _guess_type(text, domains, lang)
         return Classification(
             is_offer=True,
             service_name=name,
-            offer_type=_guess_type(text, domains, lang),
+            offer_type=offer_type,
             amount=amount,
             currency=currency,
             models=models,
             referral_required=referral,
             effort=effort,
             unit=unit,
+            topic=_guess_topic(text, offer_type),
             conditions=cond,
             confidence=min(confidence, 0.95),
         )
@@ -262,6 +282,7 @@ _LLM_SCHEMA = (
     '"claim_steps": str|null, "requirements": str|null, '
     '"referral_required": bool, '
     '"effort": "easy"|"medium"|"hard", "unit": "usd"|"credits"|"days"|"months"|null, '
+    '"topic": "ai_service"|"freebie", '
     '"conditions": {"requires_card": bool, "requires_phone": bool, '
     '"new_users_only": bool, "region": str|null, '
     '"risk_flags": [subset of "vpn"|"fake_card"|"cancel_subscription"|"chargeback"|"referral"]}, '
@@ -270,6 +291,8 @@ _LLM_SCHEMA = (
 _LLM_RULES = (
     "Rules for effort: easy=just signup with email; medium=need referral/promo code/GitHub star/business email; "
     "hard=requires fake card/VPN/subscription cancellation/automation. "
+    "Rules for topic: 'freebie'=promos, coupons, free credits or free infrastructure (e.g. free VDS/VPS/hosting/domains); "
+    "'ai_service'=an AI service/API/agent platform or a new model. "
     "If the message is not about obtaining free/credited AI access, set is_offer=false."
 )
 _LLM_SYSTEM = (
@@ -294,6 +317,8 @@ def _coerce_classification(data: dict) -> Classification:
         data["effort"] = None
     if data.get("unit") not in ("usd", "credits", "days", "months"):
         data["unit"] = None
+    if data.get("topic") not in OFFER_TOPICS:
+        data["topic"] = None
     data["conditions"] = _coerce_conditions(data.get("conditions"))
     data.pop("id", None)  # strip batch index if present
     return Classification(**data)

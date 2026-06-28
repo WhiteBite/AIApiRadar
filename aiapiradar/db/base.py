@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS offers (
     referral_required INTEGER NOT NULL DEFAULT 0,
     effort            TEXT,           -- easy / medium / hard
     unit              TEXT,           -- usd / credits / days / months
+    topic             TEXT,           -- ai_service / freebie (telegram notify routing)
     description       TEXT,           -- short blurb parsed from the service page
     url               TEXT,
     status            TEXT    NOT NULL DEFAULT 'new',
@@ -219,6 +220,11 @@ def init_db() -> None:
         # Migration 2: add conditions JSON column to offers (structured offer object).
         try:
             db.run("ALTER TABLE offers ADD COLUMN conditions TEXT")
+        except Exception:
+            pass  # column already exists — safe to ignore
+        # Migration 3: add topic column to offers (telegram notify routing).
+        try:
+            db.run("ALTER TABLE offers ADD COLUMN topic TEXT")
         except Exception:
             pass  # column already exists — safe to ignore
         db.commit()

@@ -107,6 +107,31 @@ def mark_run(name: str, signals_count: Optional[int] = None) -> None:
         db.commit()
 
 
+# ── Telegram group (forum) topic map ──────────────────────────────────────
+# A single config row persists the auto-created forum topic ids so we don't
+# recreate (and duplicate) topics on every notify run. Stored as type
+# "tg_config", name "__tg_topics__", config = {category: message_thread_id}.
+TG_TOPICS_SOURCE = "__tg_topics__"
+
+
+def get_tg_topic_map() -> dict[str, int]:
+    """Return the persisted {category: message_thread_id} map (empty if unset)."""
+    try:
+        for s in list_sources("tg_config"):
+            if s["name"] == TG_TOPICS_SOURCE:
+                cfg = s.get("config") or {}
+                return {k: int(v) for k, v in cfg.items() if v}
+    except Exception:
+        log.warning("could not read tg topic map", exc_info=False)
+    return {}
+
+
+def save_tg_topic_map(mapping: dict[str, int]) -> None:
+    """Persist the {category: message_thread_id} map (upsert by name)."""
+    clean = {k: int(v) for k, v in mapping.items() if v}
+    create_source(type="tg_config", name=TG_TOPICS_SOURCE, config=clean, enabled=True)
+
+
 def enabled_telegram_channels() -> list[dict[str, Any]]:
     """Return [{"channel": str, "topic_id": int|None}] for enabled telegram sources."""
     out: list[dict[str, Any]] = []

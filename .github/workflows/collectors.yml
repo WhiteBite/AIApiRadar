@@ -23,6 +23,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       AIRADAR_TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       AIRADAR_TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      AIRADAR_TG_GROUP_CHAT_ID: ${{ secrets.TG_GROUP_CHAT_ID }}
       # Collector keys — empty secret = collector stays a graceful no-op.
       AIRADAR_GITHUB_TOKEN: ${{ secrets.AIRADAR_GITHUB_TOKEN || github.token }}
       AIRADAR_SEARCH_API_KEY: ${{ secrets.AIRADAR_SEARCH_API_KEY }}
@@ -56,6 +57,12 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements.txt
 
+      - name: Ensure new offer columns in D1 (before pulling schema)
+        continue-on-error: true
+        run: |
+          npx --yes wrangler@4 d1 execute aiapiradar --remote --command "ALTER TABLE offers ADD COLUMN conditions TEXT;"
+          npx --yes wrangler@4 d1 execute aiapiradar --remote --command "ALTER TABLE offers ADD COLUMN topic TEXT;"
+
       - name: Pull current D1 → local SQLite
         run: |
           npx --yes wrangler@4 d1 export aiapiradar --remote --output=dump.sql
@@ -71,10 +78,8 @@ jobs:
           python -m aiapiradar.cli reclassify --batch-size 20
           python -m aiapiradar.cli score
 
-      - name: Ensure offers.conditions in D1
-        continue-on-error: true
-        run: |
-          npx --yes wrangler@4 d1 execute aiapiradar --remote --command "ALTER TABLE offers ADD COLUMN conditions TEXT;"
+      - name: Ensure Telegram forum topics (persist ids before D1 dump)
+        run: python -m aiapiradar.cli tg-setup
 
       - name: Push local SQLite → D1
         run: |
@@ -85,4 +90,5 @@ jobs:
         env:
           AIRADAR_TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           AIRADAR_TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          AIRADAR_TG_GROUP_CHAT_ID: ${{ secrets.TG_GROUP_CHAT_ID }}
         run: python -m aiapiradar.cli notify --limit 5

@@ -45,8 +45,13 @@ class Settings(BaseSettings):
     mistral_model: str = "mistral-small-latest"
     cerebras_model: str = "llama-3.3-70b"
     openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    # Cloudflare Workers AI — zero-setup backstop provider. Reuses the CF
+    # account id + api token already configured for D1 (no extra signup). Free
+    # ~10k neurons/day. OpenAI-compatible endpoint.
+    workersai_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
     # Ordered provider priority (csv). "legacy" = the llm_base_url/llm_model/llm_api_key triple.
-    llm_provider_order: str = "legacy,gemini,groq,mistral,cerebras,openrouter"
+    # workersai is last → free floor tried after external providers, before heuristic.
+    llm_provider_order: str = "legacy,gemini,groq,mistral,cerebras,openrouter,workersai"
 
     # Collector API keys (optional; collectors degrade gracefully if absent)
     github_token: str = ""
@@ -81,6 +86,21 @@ class Settings(BaseSettings):
     tg_bot_token: str = ""
     tg_chat_id: str = ""
     notify_min_score: float = 0.6
+    # Minimum offer confidence (max over its signals) for the "looks legit"
+    # gate in group mode. Offers from other telegram channels bypass it.
+    notify_min_confidence: float = 0.5
+
+    # ── Telegram group (forum) routing ─────────────────────────────────────
+    # When tg_group_chat_id is set, the notifier posts into forum TOPICS of
+    # this supergroup instead of the single tg_chat_id feed. The bot must be an
+    # admin with "Manage topics" rights and the group must have Topics enabled.
+    # Format: a -100… supergroup id.
+    tg_group_chat_id: str = ""
+    # Explicit forum topic (message_thread_id) overrides. 0 = auto-create the
+    # topic on first run and persist its id (see `cli tg-setup`).
+    tg_topic_ai_services: int = 0   # 🤖 ИИ-сервисы и агенты
+    tg_topic_freebies: int = 0      # 🎁 Халява и акции (VDS, кредиты, триалы)
+    tg_topic_forwarded: int = 0     # 📡 Из других каналов
 
     # ── Platform selection ─────────────────────────────────────────────────
     # local       → SQLite/Postgres + APScheduler + FastAPI  (VPS / Docker)
@@ -138,6 +158,14 @@ class Settings(BaseSettings):
             "mistral": ("https://api.mistral.ai/v1", self.mistral_api_key, [self.mistral_model]),
             "cerebras": ("https://api.cerebras.ai/v1", self.cerebras_api_key, [self.cerebras_model]),
             "openrouter": ("https://openrouter.ai/api/v1", self.openrouter_api_key, [self.openrouter_model]),
+            # Workers AI: base_url needs the CF account id; left "" (skipped) when
+            # unset so the provider is only active with both account id + token.
+            "workersai": (
+                (f"https://api.cloudflare.com/client/v4/accounts/{self.cf_account_id}/ai/v1"
+                 if self.cf_account_id else ""),
+                self.cf_api_token,
+                [self.workersai_model],
+            ),
         }
         out: list[dict] = []
         for name in [x.strip() for x in self.llm_provider_order.split(",") if x.strip()]:

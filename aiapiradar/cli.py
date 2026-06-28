@@ -107,6 +107,20 @@ def cmd_notify(args: argparse.Namespace) -> None:
     log.info("notified %d offers", n)
 
 
+def cmd_tg_setup(_: argparse.Namespace) -> None:
+    """Ensure the Telegram forum topics exist (create + persist their ids).
+
+    Run once after adding the bot (as admin, Topics enabled) to the group, or
+    let the hourly CI run it before the D1 dump so ids persist. Idempotent:
+    reuses ids already stored / set via env.
+    """
+    from .notifier import setup_group_topics
+
+    init_db()
+    topics = asyncio.run(setup_group_topics())
+    log.info("tg-setup topics: %s", topics)
+
+
 def cmd_reclassify(args: argparse.Namespace) -> None:
     """Re-classify stored offers with the LLM in BATCHES.
 
@@ -183,6 +197,8 @@ def cmd_reclassify(args: argparse.Namespace) -> None:
                 fields.append("unit=?"); params.append(c.unit)
             if c.effort:
                 fields.append("effort=?"); params.append(c.effort)
+            if c.topic:
+                fields.append("topic=?"); params.append(c.topic)
             if c.offer_type:
                 fields.append("type=?"); params.append(c.offer_type)
             if c.claim_steps:
@@ -382,6 +398,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_notify = sub.add_parser("notify", help="push fresh high-score offers to Telegram")
     p_notify.add_argument("--limit", type=int, default=20)
     p_notify.set_defaults(func=cmd_notify)
+
+    sub.add_parser(
+        "tg-setup",
+        help="create/persist Telegram forum topics for the notify group",
+    ).set_defaults(func=cmd_tg_setup)
 
     p_reclassify = sub.add_parser("reclassify", help="LLM-reclassify stored offers in batches (fits free-tier quotas)")
     p_reclassify.add_argument("--batch-size", type=int, default=15)

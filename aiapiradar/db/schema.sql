@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS offers (
     referral_required INTEGER NOT NULL DEFAULT 0,
     effort            TEXT,           -- easy / medium / hard
     unit              TEXT,           -- usd / credits / days / months
+    topic             TEXT,           -- ai_service / freebie (telegram notify routing)
     description       TEXT,           -- short blurb parsed from the service page
     url               TEXT,
     status            TEXT    NOT NULL DEFAULT 'new',

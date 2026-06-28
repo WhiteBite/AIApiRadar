@@ -17,7 +17,8 @@ collectors ─▶ normalize ─▶ pre-filter ─▶ classify ─▶ enrich ─�
 - **Collectors** (one plugin per source) emit raw `Signal`s.
 - **Pre-filter** drops obvious noise (RU/EN/CN keywords) before the LLM.
 - **Classifier** (LLM when an API key is set, else a heuristic fallback)
-  extracts `service_name, offer_type, amount, models, claim_steps, …`.
+  extracts `service_name, offer_type, amount, models, claim_steps, topic, …`
+  (`topic` = `ai_service` / `freebie`, used by the Telegram notifier).
 - **Enrich** probes the service (alive? `/pricing`? relay engine? domain age via
   crt.sh) and computes a reliability score.
 - **Store** keeps `Service ⟵ Offer ⟵ Signal`, de-duplicated.
@@ -61,6 +62,7 @@ python -m aiapiradar.cli run            # start the scheduler (collect loop)
 python -m aiapiradar.cli enrich         # probe/enrich stale services
 python -m aiapiradar.cli score          # recompute offer scores
 python -m aiapiradar.cli notify         # push fresh high-score offers to Telegram
+python -m aiapiradar.cli tg-setup       # create/persist Telegram forum topics (group mode)
 python -m aiapiradar.cli serve          # web dashboard + API at :8000
 ```
 
@@ -86,11 +88,56 @@ Both share a SQLite volume; switch to Postgres via the commented block in
 | `AIRADAR_DB_URL` | SQLite (default) or Postgres URL |
 | `AIRADAR_LLM_API_KEY` / `_BASE_URL` / `_MODEL` | enable LLM classifier (OpenAI-compatible) |
 | `AIRADAR_TG_BOT_TOKEN` / `_CHAT_ID` / `NOTIFY_MIN_SCORE` | Telegram notifications |
+| `AIRADAR_TG_GROUP_CHAT_ID` | forum supergroup → route offers into topics (see below) |
+| `AIRADAR_NOTIFY_MIN_CONFIDENCE` | min classifier confidence for the "looks legit" gate |
 | `AIRADAR_GITHUB_TOKEN` | higher GitHub rate limits |
 | `AIRADAR_SEARCH_API_KEY` / `_CX` | Google Programmable Search |
 | `AIRADAR_YOUTUBE_API_KEY` | YouTube Data API |
 | `AIRADAR_TG_API_ID` / `_API_HASH` / `_SESSION` | Telethon channel ingest |
 | `AIRADAR_SCORE_W_*` | scoring weights |
+
+## Telegram notifications
+
+Two modes, picked automatically by config:
+
+- **Single chat** — set `AIRADAR_TG_BOT_TOKEN` + `AIRADAR_TG_CHAT_ID`. Every
+  offer with `score ≥ NOTIFY_MIN_SCORE` is pushed once into that chat.
+- **Forum group (topics)** — also set `AIRADAR_TG_GROUP_CHAT_ID` (a `-100…`
+  supergroup id). The notifier then posts into three forum **topics** instead:
+
+  | topic | what lands there |
+  |-------|------------------|
+  | 🤖 ИИ-сервисы и агенты | AI services / APIs / agent platforms / model releases |
+  | 🎁 Халява и акции | promos, coupons, free credits, free VDS/VPS/hosting |
+  | 📡 Из других каналов | offers picked up from other Telegram channels (reposted with attribution) |
+
+  **Inclusion gate:** an offer is sent if `(score ≥ NOTIFY_MIN_SCORE` **and**
+  `confidence ≥ NOTIFY_MIN_CONFIDENCE)` **or** it came from another Telegram
+  channel. **Routing** to 🤖 vs 🎁 uses the classifier's `topic` field
+  (`ai_service` / `freebie`); 📡 is chosen when the offer originates from a
+  telegram channel.
+
+### Group setup
+
+1. Create a bot via [@BotFather](https://t.me/BotFather).
+2. Add it to the supergroup as **admin** with the *Manage topics* right, and
+   enable **Topics** in the group settings.
+3. Set `AIRADAR_TG_BOT_TOKEN` and `AIRADAR_TG_GROUP_CHAT_ID` (in CI: secrets
+   `TG_BOT_TOKEN` and `TG_GROUP_CHAT_ID`).
+4. Topics are created automatically on first run. To create them up front:
+
+   ```bash
+   python -m aiapiradar.cli tg-setup
+   ```
+
+The created `message_thread_id`s are persisted (in the `sources` table) so
+topics aren't recreated. To pin them manually instead, set
+`AIRADAR_TG_TOPIC_AI_SERVICES`, `AIRADAR_TG_TOPIC_FREEBIES`,
+`AIRADAR_TG_TOPIC_FORWARDED` to existing thread ids.
+
+> Note: the bot reposts text from other channels (with a link back) rather than
+> using a native forward — the upstream channels are read via a separate user
+> client the bot isn't a member of.
 
 ## Tests
 
