@@ -71,10 +71,10 @@ function Section({
 }) {
   return (
     <section>
-      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+      <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-zinc-400">
         {title}
         {count !== undefined && (
-          <span className="ml-1.5 text-zinc-600 tabular-nums">{count}</span>
+          <span className="ml-1.5 text-zinc-400 tabular-nums">{count}</span>
         )}
       </h3>
       {children}
@@ -86,14 +86,14 @@ function Section({
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[11px] uppercase tracking-wide text-zinc-600">{label}</dt>
+      <dt className="text-[12px] uppercase tracking-wide text-zinc-400">{label}</dt>
       <dd className="mt-0.5 text-[13px] text-zinc-200">{children}</dd>
     </div>
   );
 }
 
 function Dash() {
-  return <span className="text-zinc-600">—</span>;
+  return <span className="text-zinc-500">—</span>;
 }
 
 /** Compact source/provenance row. */
@@ -105,7 +105,7 @@ function SourceRow({ sig }: { sig: Signal }) {
         <span className="truncate text-xs text-zinc-400">{sig.channel}</span>
       )}
       {sig.observed_at && (
-        <span className="shrink-0 text-[11px] text-zinc-600 tabular-nums">
+        <span className="shrink-0 text-[12px] text-zinc-400 tabular-nums">
           {timeAgo(sig.observed_at)}
         </span>
       )}
@@ -137,12 +137,12 @@ function OriginalPost({ sig }: { sig: Signal }) {
       {/* Post header */}
       <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2">
         <SourceBadge source={sig.source} />
-        <span className="text-[11px] text-zinc-400 font-medium">{label}</span>
+        <span className="text-[12px] text-zinc-400 font-medium">{label}</span>
         {sig.channel && (
-          <span className="text-[11px] text-zinc-500">{sig.channel}</span>
+          <span className="text-[12px] text-zinc-400">{sig.channel}</span>
         )}
         {sig.observed_at && (
-          <span className="ml-auto text-[11px] text-zinc-600 tabular-nums">
+          <span className="ml-auto text-[12px] text-zinc-400 tabular-nums">
             {timeAgo(sig.observed_at)}
           </span>
         )}
@@ -151,7 +151,7 @@ function OriginalPost({ sig }: { sig: Signal }) {
             href={sig.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-1 inline-flex items-center gap-0.5 text-[11px] text-zinc-500 hover:text-zinc-200"
+            className="ml-1 inline-flex items-center gap-0.5 text-[12px] text-zinc-400 hover:text-zinc-200"
           >
             оригинал <ArrowUpRight className="h-2.5 w-2.5" />
           </a>
@@ -165,7 +165,7 @@ function OriginalPost({ sig }: { sig: Signal }) {
         {isLong && (
           <button
             onClick={() => setExpanded(!expanded)}
-            className="mt-2 text-[12px] text-zinc-500 hover:text-zinc-300 underline underline-offset-2"
+            className="mt-2 text-[13px] text-zinc-400 hover:text-zinc-300 underline underline-offset-2"
           >
             {expanded ? "Свернуть" : "Показать полностью"}
           </button>
@@ -270,7 +270,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
               )}
             </div>
             {aliases.length > 0 && (
-              <p className="mt-1 truncate text-xs text-zinc-600">
+              <p className="mt-1 truncate text-xs text-zinc-400">
                 также: {aliases.join(", ")}
               </p>
             )}
@@ -306,7 +306,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
               href={offer.source_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300"
+              className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-300"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Открыть оригинал
@@ -380,7 +380,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
             {engine && <Fact label="Движок">{engine}</Fact>}
 
             <div className="col-span-2 min-w-0 sm:col-span-3">
-              <dt className="text-[11px] uppercase tracking-wide text-zinc-600">Модели</dt>
+              <dt className="text-[12px] uppercase tracking-wide text-zinc-400">Модели</dt>
               <dd className="mt-1">
                 {offer.models.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
@@ -401,7 +401,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
               <ol className="space-y-2">
                 {steps.map((step, i) => (
                   <li key={i} className="flex gap-2.5 text-[13px] leading-relaxed text-zinc-200">
-                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[11px] font-medium tabular-nums text-zinc-400">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[12px] font-medium tabular-nums text-zinc-400">
                       {i + 1}
                     </span>
                     <span className="min-w-0">{step}</span>
@@ -411,7 +411,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
             ) : richest?.raw_text ? (
               <OriginalPost sig={richest} />
             ) : (
-              <p className="rounded-md border border-dashed border-zinc-800 px-3 py-2.5 text-[13px] text-zinc-500">
+              <p className="rounded-md border border-dashed border-zinc-800 px-3 py-2.5 text-[13px] text-zinc-400">
                 Шаги не извлечены — открой сайт или оригинал источника.
               </p>
             )}
@@ -442,7 +442,7 @@ export function OfferDetail({ offer, onClose }: OfferDetailProps) {
                 ))}
               </div>
             ) : (
-              <p className="flex items-center gap-2 text-[13px] text-zinc-500">
+              <p className="flex items-center gap-2 text-[13px] text-zinc-400">
                 <Radio className="h-3.5 w-3.5" /> Источники загружаются…
               </p>
             )}
@@ -457,7 +457,7 @@ export function OfferDetailEmpty() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-800 bg-zinc-900/30 p-8 text-center">
       <ArrowLeft className="h-7 w-7 text-zinc-700" />
-      <p className="text-sm text-zinc-500">Выбери оффер слева — здесь появятся детали</p>
+      <p className="text-sm text-zinc-400">Выбери оффер слева — здесь появятся детали</p>
     </div>
   );
 }

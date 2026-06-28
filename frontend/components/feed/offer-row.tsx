@@ -55,7 +55,7 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
       <div className="flex items-center gap-2 min-w-0">
         <Favicon domain={offer.domain} size={14} className="shrink-0 opacity-80" />
         {isNew && (
-          <span className="shrink-0 rounded-sm bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-1 py-px text-[9px] font-bold uppercase tracking-wide leading-none">
+          <span className="shrink-0 rounded-sm bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-1 py-px text-[10px] font-bold uppercase tracking-wide leading-none">
             new
           </span>
         )}
@@ -73,17 +73,17 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
       </div>
 
       {/* line 2: models + source + age */}
-      <div className="flex items-center gap-1.5 mt-1 text-[12px] min-w-0 pl-4">
+      <div className="flex items-center gap-1.5 mt-1 text-[13px] min-w-0 pl-4">
         <span className="flex-1 min-w-0 truncate text-zinc-400">
           {offer.models.length > 0 ? (
             offer.models.slice(0, 4).join(" · ") + (offer.models.length > 4 ? ` +${offer.models.length - 4}` : "")
           ) : (
-            <span className="text-zinc-600">—</span>
+            <span className="text-zinc-500">—</span>
           )}
         </span>
-        <span className="shrink-0 flex items-center gap-1.5 text-zinc-500">
+        <span className="shrink-0 flex items-center gap-1.5 text-zinc-400">
           {src && <span>{src}</span>}
-          {src && <span className="text-zinc-700">·</span>}
+          {src && <span className="text-zinc-500">·</span>}
           <span className="tabular-nums">{offer.first_seen_at ? timeAgo(offer.first_seen_at) : ""}</span>
         </span>
         <LikeButtons offerId={offer.id} compact initialLikes={offer.likes} initialDislikes={offer.dislikes} />

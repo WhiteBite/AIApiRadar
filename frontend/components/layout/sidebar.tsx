@@ -49,7 +49,7 @@ export async function Sidebar() {
 
       {/* Stats overview */}
       <section className="px-4 mb-4" aria-label="Stats overview">
-        <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest mb-2">
+        <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest mb-2">
           Overview
         </p>
         <dl className="flex flex-col gap-1.5">
@@ -82,7 +82,7 @@ export async function Sidebar() {
 
       {/* Sources */}
       <section className="px-4 mb-4" aria-label="Data sources">
-        <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest mb-2">
+        <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest mb-2">
           Sources
         </p>
         <ul className="flex flex-col gap-1.5">
@@ -103,7 +103,7 @@ export async function Sidebar() {
 
       {/* Version — baked in at build time from the root VERSION file */}
       <div className="px-4 py-3 border-t border-zinc-800/50">
-        <p className="text-[11px] text-zinc-600 tabular-nums">
+        <p className="text-[12px] text-zinc-500 tabular-nums">
           v{process.env.NEXT_PUBLIC_BUILD_VERSION ?? "dev"}
         </p>
       </div>

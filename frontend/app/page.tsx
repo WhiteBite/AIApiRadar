@@ -179,7 +179,7 @@ export default function FeedPage() {
                   "flex items-center gap-1.5 h-7 px-3 rounded-md text-[13px] font-medium transition-colors",
                   filters.tab === t.value
                     ? "bg-zinc-700 text-zinc-100"
-                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60"
+                    : "text-zinc-400 hover:text-zinc-300 hover:bg-zinc-800/60"
                 )}
               >
                 {t.dot && <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", t.dot)} />}
@@ -216,10 +216,10 @@ export default function FeedPage() {
                 onClick={() => update({ sort: value })}
                 title={title}
                 className={cn(
-                  "h-8 px-3 text-[12px] font-medium transition-colors border-r last:border-r-0 border-zinc-800",
+                  "h-8 px-3 text-[13px] font-medium transition-colors border-r last:border-r-0 border-zinc-800",
                   filters.sort === value
                     ? "bg-zinc-700 text-zinc-100"
-                    : "bg-transparent text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-300"
+                    : "bg-transparent text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-300"
                 )}
               >
                 {label}
@@ -235,7 +235,7 @@ export default function FeedPage() {
               "h-8 px-2.5 rounded-lg border text-[13px] transition-colors shrink-0 flex items-center gap-1.5",
               showFilters || numActive > 0
                 ? "border-blue-500/40 text-blue-300 bg-blue-500/10"
-                : "border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
+                : "border-zinc-800 text-zinc-400 hover:text-zinc-300 hover:border-zinc-700"
             )}
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -246,7 +246,7 @@ export default function FeedPage() {
           </button>
 
           {/* Count */}
-          <span className="text-[12px] text-zinc-600 tabular-nums w-8 text-right shrink-0">
+          <span className="text-[13px] text-zinc-400 tabular-nums w-8 text-right shrink-0">
             {isLoading ? "…" : offers.length}
           </span>
         </div>
@@ -258,7 +258,7 @@ export default function FeedPage() {
 
           {/* Window */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] text-zinc-500 w-16 shrink-0">Период</span>
+            <span className="text-[12px] text-zinc-400 w-16 shrink-0">Период</span>
             {WINDOWS.map((w) => (
               <Chip key={String(w.value)} active={filters.sinceHours === w.value}
                 onClick={() => update({ sinceHours: w.value })}>
@@ -269,7 +269,7 @@ export default function FeedPage() {
 
           {/* Source */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] text-zinc-500 w-16 shrink-0">Источник</span>
+            <span className="text-[12px] text-zinc-400 w-16 shrink-0">Источник</span>
             {(Object.keys(SOURCE_CATEGORY_LABELS) as SourceCategory[]).map((cat) => (
               <Chip key={cat} active={filters.sourceCategory === cat}
                 onClick={() => toggleSource(cat)} color="blue">
@@ -280,7 +280,7 @@ export default function FeedPage() {
 
           {/* Type */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] text-zinc-500 w-16 shrink-0">Тип</span>
+            <span className="text-[12px] text-zinc-400 w-16 shrink-0">Тип</span>
             {OFFER_TYPE_CHIPS.map(({ value, label }) => (
               <Chip key={value} active={filters.offerType === value}
                 onClick={() => update({ offerType: filters.offerType === value ? "" : value })}
@@ -292,7 +292,7 @@ export default function FeedPage() {
 
           {/* Amount */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] text-zinc-500 w-16 shrink-0">Сумма</span>
+            <span className="text-[12px] text-zinc-400 w-16 shrink-0">Сумма</span>
             {AMOUNT_PRESETS.map(({ value, label }) => (
               <Chip key={String(value)} active={filters.minAmount === value}
                 onClick={() => update({ minAmount: value })} color="emerald">
@@ -303,7 +303,7 @@ export default function FeedPage() {
 
           {/* Engine + toggles */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] text-zinc-500 w-16 shrink-0">Движок</span>
+            <span className="text-[12px] text-zinc-400 w-16 shrink-0">Движок</span>
             {ENGINE_CHIPS.map((e) => (
               <Chip key={e} active={filters.engine === e}
                 onClick={() => update({ engine: filters.engine === e ? "" : e })} color="amber">
@@ -321,7 +321,7 @@ export default function FeedPage() {
 
           {numActive > 0 && (
             <button onClick={() => { setFilters(DEFAULT_FILTERS); setLiveOnly(false); }}
-              className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300">
+              className="flex items-center gap-1 text-[12px] text-zinc-400 hover:text-zinc-300">
               <X className="w-3 h-3" /> Сбросить фильтры
             </button>
           )}
@@ -331,15 +331,15 @@ export default function FeedPage() {
       {/* ═══ MODEL CHIPS ══════════════════════════════════════════════════ */}
       {topModels.length > 0 && (
         <div className="shrink-0 flex items-center gap-1.5 px-3 h-9 border-b border-zinc-800 bg-zinc-950 overflow-x-auto">
-          <span className="text-[11px] text-zinc-600 shrink-0">Модель:</span>
+          <span className="text-[12px] text-zinc-400 shrink-0">Модель:</span>
           {topModels.map(({ model, count }) => {
             const active = filters.model === model;
             const color = MODEL_COLORS[model] ?? "bg-zinc-700/40 text-zinc-300 border-zinc-600";
             return (
               <button key={model} onClick={() => toggleModel(model)}
                 className={cn(
-                  "shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] font-medium transition-all",
-                  active ? color + " ring-1 ring-white/30" : "border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
+                  "shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[13px] font-medium transition-all",
+                  active ? color + " ring-1 ring-white/30" : "border-zinc-800 text-zinc-400 hover:text-zinc-300 hover:border-zinc-700"
                 )}>
                 {model}
                 <span className="text-[10px] opacity-60 tabular-nums">{count}</span>
@@ -347,14 +347,14 @@ export default function FeedPage() {
             );
           })}
           {filters.model && (
-            <button onClick={() => update({ model: "" })} className="shrink-0 text-[11px] text-zinc-500 hover:text-zinc-300 ml-1">✕</button>
+            <button onClick={() => update({ model: "" })} className="shrink-0 text-[12px] text-zinc-400 hover:text-zinc-300 ml-1">✕</button>
           )}
         </div>
       )}
 
       {/* ═══ BODY ══════════════════════════════════════════════════════════ */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <div className="w-[340px] xl:w-[380px] shrink-0 border-r border-zinc-800 overflow-y-auto">
+        <div className="w-[380px] xl:w-[440px] shrink-0 border-r border-zinc-800 overflow-y-auto">
           <OfferList offers={offers} selectedId={selectedId} onSelect={setSelectedId} isLoading={isLoading} />
         </div>
         <div className="flex-1 min-w-0 overflow-hidden p-3">
