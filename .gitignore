@@ -15,6 +15,7 @@ build/
 .env
 .env.local
 .env.*.local
+KEYS.local.md
 
 # ── Database / data files ────────────────────────────────────────────────────
 *.db
