@@ -21,6 +21,10 @@ jobs:
       AIRADAR_DB_URL: sqlite:///./aiapiradar.db
       CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      # Workers AI = free LLM backstop in the pipeline; the config's
+      # cf_account_id/cf_api_token (these AIRADAR_CF_* vars) build its endpoint.
+      AIRADAR_CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      AIRADAR_CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
       AIRADAR_TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       AIRADAR_TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       AIRADAR_TG_GROUP_CHAT_ID: ${{ secrets.TG_GROUP_CHAT_ID }}
@@ -37,7 +41,8 @@ jobs:
       AIRADAR_TG_API_HASH: ${{ secrets.AIRADAR_TG_API_HASH }}
       # LLM provider keys (multi-provider fallback chain). Empty = skipped.
       AIRADAR_LLM_API_KEY: ${{ secrets.AIRADAR_LLM_API_KEY }}
-      AIRADAR_GEMINI_API_KEY: ${{ secrets.AIRADAR_GEMINI_API_KEY }}
+      # Accept either AIRADAR_-prefixed or short GEMINI_API_KEY secret name.
+      AIRADAR_GEMINI_API_KEY: ${{ secrets.AIRADAR_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
       AIRADAR_GROQ_API_KEY: ${{ secrets.AIRADAR_GROQ_API_KEY }}
       AIRADAR_MISTRAL_API_KEY: ${{ secrets.AIRADAR_MISTRAL_API_KEY }}
       AIRADAR_CEREBRAS_API_KEY: ${{ secrets.AIRADAR_CEREBRAS_API_KEY }}
