@@ -47,7 +47,6 @@ from .probe import (
     probe,
     reliability_score,
     _enrich_service_db,
-    _enrich_service_orm,
 )
 from .sitemap import _OFFER_URL_RE, _SITEMAP_LOC_RE, _discover_offer_urls
 from .text import (

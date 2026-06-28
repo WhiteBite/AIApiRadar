@@ -3,9 +3,8 @@
 score = w_fresh*fresh + w_amount*amount + w_ease*ease + w_reliab*reliability
 Weights come from settings (AIRADAR_SCORE_W_*). Result in [0, 1].
 
-rescore_all() accepts either:
-  - a Database (new protocol path)  — used by watchdog and the scheduler
-  - a SQLAlchemy Session            — backward compat for legacy tests
+rescore_all(db) recomputes scores over the raw-SQL Database path (used by the
+watchdog and the scheduler).
 """
 from __future__ import annotations
 
@@ -213,30 +212,8 @@ def _rescore_all_db(db: Database, settings: Optional[Settings] = None) -> int:
     return len(rows)
 
 
-# ─── SQLAlchemy-session path (backward compat) ────────────────────────────────
-
-def _rescore_all_orm(session, settings: Optional[Settings] = None) -> int:
-    from sqlalchemy import select
-
-    from .models import Offer, Service
-
-    settings = settings or get_settings()
-    now = utcnow()
-    offers = session.scalars(select(Offer)).all()
-    for offer in offers:
-        service = session.get(Service, offer.service_id) if offer.service_id else None
-        offer.score = score_offer(offer, service, now, settings)
-    log.info("rescored %d offers (orm path)", len(offers))
-    return len(offers)
-
-
 # ─── Public entry point ───────────────────────────────────────────────────────
 
-def rescore_all(session_or_db, settings: Optional[Settings] = None) -> int:
-    """Recompute scores for every offer.
-
-    Accepts either a Database (new protocol) or a SQLAlchemy Session (legacy).
-    """
-    if isinstance(session_or_db, Database):
-        return _rescore_all_db(session_or_db, settings)
-    return _rescore_all_orm(session_or_db, settings)
+def rescore_all(db: Database, settings: Optional[Settings] = None) -> int:
+    """Recompute scores for every offer over the Database path."""
+    return _rescore_all_db(db, settings)

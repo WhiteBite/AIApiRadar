@@ -1,11 +1,10 @@
 """Main probe() entry, ProbeResult, crt.sh age lookup and the enrich_service
-orchestration (DB-protocol + legacy ORM paths).
+orchestration over the raw-SQL Database path.
 
 Network functions take an httpx.AsyncClient so tests can inject a MockTransport.
 
-enrich_service() accepts either:
-  - (Database, service_id: int, client)   — new protocol path (watchdog)
-  - (Session, Service, client)             — backward compat for legacy tests
+enrich_service(db, service_id, client, do_crtsh=...) probes a service and
+updates its row via the Database protocol.
 """
 from __future__ import annotations
 
@@ -275,39 +274,9 @@ async def _enrich_service_db(db, service_id: int, client: httpx.AsyncClient,
     )
 
 
-# ─── Legacy SQLAlchemy-session path (backward compat) ────────────────────────
-
-async def _enrich_service_orm(session, service, client: httpx.AsyncClient) -> None:
-    p = await probe(service.canonical_domain, client)
-    age = await crtsh_earliest(service.canonical_domain, client)
-    now = utcnow()
-
-    service.status = "active" if p.alive else "dead"
-    if p.engine:
-        service.engine = p.engine
-    if age:
-        service.domain_first_seen = age
-    age_days = (now - age).total_seconds() / 86400.0 if age else None
-    service.reliability = reliability_score(p.alive, p.has_pricing, bool(p.engine), age_days)
-    service.last_checked = now
-    log.info(
-        "enriched %s status=%s engine=%s reliability=%.2f",
-        service.canonical_domain, service.status, service.engine, service.reliability,
-    )
-
-
 # ─── Public entry point ───────────────────────────────────────────────────────
 
-async def enrich_service(db_or_session, service_or_id, client: httpx.AsyncClient,
+async def enrich_service(db, service_id: int, client: httpx.AsyncClient,
                          do_crtsh: bool = True) -> None:
-    """Probe a service and update its fields.
-
-    New usage:   enrich_service(db, service_id, client, do_crtsh=...)
-    Legacy usage: enrich_service(session, service_orm_obj, client)
-    """
-    from ..db.base import Database
-
-    if isinstance(db_or_session, Database):
-        await _enrich_service_db(db_or_session, service_or_id, client, do_crtsh=do_crtsh)
-    else:
-        await _enrich_service_orm(db_or_session, service_or_id, client)
+    """Probe a service and update its fields via the Database path."""
+    await _enrich_service_db(db, service_id, client, do_crtsh=do_crtsh)
