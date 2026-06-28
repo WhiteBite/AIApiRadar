@@ -1,9 +1,8 @@
 """Shared pytest fixtures + factory re-exports for the raw-SQL test path.
 
-``db_env`` replicates the proven reset used by test_cross_source.py: point the
-app at a throwaway SQLite file via env, clear the cached settings, reset the
-legacy ORM engine/session singletons (still present until the ORM is removed),
-and create the schema through the Database-protocol ``init_db()``.
+``db_env`` points the app at a throwaway SQLite file via env, clears the cached
+settings, and creates the schema through the Database-protocol ``init_db()`` —
+the same raw-SQL path both production targets run.
 
 Factories are re-exported here so tests can ``from tests.factories import ...``
 (package-qualified) or rely on the fixture; see tests/factories.py.
@@ -24,8 +23,6 @@ def db_env(tmp_path, monkeypatch):
     import aiapiradar.db as db
 
     config.get_settings.cache_clear()
-    db._engine = None
-    db._SessionFactory = None
     db.init_db()
     try:
         yield

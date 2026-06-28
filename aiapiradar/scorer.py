@@ -142,21 +142,6 @@ def _compose(age_hours: float, quality: float) -> float:
     return round(decay * (QUALITY_FLOOR + (1.0 - QUALITY_FLOOR) * quality), 4)
 
 
-def score_offer(offer, service, now: dt.datetime,
-                settings: Optional[Settings] = None) -> float:
-    """Score an ORM Offer object (backward compat for legacy tests / callers)."""
-    settings = settings or get_settings()
-    first = offer.first_seen_at or now
-    if first.tzinfo is None:
-        first = first.replace(tzinfo=dt.timezone.utc)
-    age_hours = max((now - first).total_seconds() / 3600.0, 0.0)
-
-    reliab = service.reliability if service else 0.0
-    quality = _quality_blend(offer.amount, offer.type, offer.referral_required,
-                             reliab, settings)
-    return _compose(age_hours, quality)
-
-
 # ─── Database-protocol path ──────────────────────────────────────────────────
 
 def _rescore_all_db(db: Database, settings: Optional[Settings] = None) -> int:

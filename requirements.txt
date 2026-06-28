@@ -1,5 +1,4 @@
 # --- Core (Phase 0-1) ---
-SQLAlchemy>=2.0,<3.0
 pydantic>=2.6
 pydantic-settings>=2.2
 httpx>=0.27

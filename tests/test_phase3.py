@@ -12,7 +12,7 @@ from aiapiradar.enrich import (
     crtsh_earliest, enrich_service,
 )
 from aiapiradar.scorer import (
-    freshness_score, amount_score, ease_score, score_offer, rescore_all,
+    freshness_score, amount_score, ease_score, rescore_all,
 )
 
 
