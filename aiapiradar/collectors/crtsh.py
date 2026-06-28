@@ -12,6 +12,7 @@ from typing import Iterable
 import httpx
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_json
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -72,15 +73,15 @@ class CrtshCollector(Collector):
             # Path 1: keyword patterns → force_classify (classify immediately).
             for pattern in SEARCH_PATTERNS:
                 try:
-                    r = await client.get(CRTSH_URL, params={
+                    data = await fetch_json(CRTSH_URL, params={
                         "q": pattern,
                         "output": "json",
                         "exclude": "expired",
-                    })
-                    if r.status_code != 200:
+                    }, client=client)
+                    if data is None:
                         continue
                     rows = 0
-                    for entry in r.json() or []:
+                    for entry in data or []:
                         if rows >= max_per_pattern:
                             break
                         for name_val in (entry.get("name_value") or "").split("\n"):
@@ -103,15 +104,15 @@ class CrtshCollector(Collector):
             # can be slow, so each pattern is capped and isolated in try/except.
             for pattern in HARVEST_PATTERNS:
                 try:
-                    r = await client.get(CRTSH_URL, params={
+                    data = await fetch_json(CRTSH_URL, params={
                         "q": pattern,
                         "output": "json",
                         "exclude": "expired",
-                    })
-                    if r.status_code != 200:
+                    }, client=client)
+                    if data is None:
                         continue
                     rows = 0
-                    for entry in r.json() or []:
+                    for entry in data or []:
                         if rows >= max_per_pattern:
                             break
                         for name_val in (entry.get("name_value") or "").split("\n"):
@@ -149,15 +150,15 @@ class CrtshCollector(Collector):
             # the real service, and dedup on the stripped value.
             for pattern in SUBDOMAIN_PATTERNS:
                 try:
-                    r = await client.get(CRTSH_URL, params={
+                    data = await fetch_json(CRTSH_URL, params={
                         "q": pattern,
                         "output": "json",
                         "exclude": "expired",
-                    })
-                    if r.status_code != 200:
+                    }, client=client)
+                    if data is None:
                         continue
                     rows = 0
-                    for entry in r.json() or []:
+                    for entry in data or []:
                         if rows >= max_per_pattern:
                             break
                         for name_val in (entry.get("name_value") or "").split("\n"):

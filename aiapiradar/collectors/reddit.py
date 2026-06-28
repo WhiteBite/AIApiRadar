@@ -16,11 +16,14 @@ import feedparser
 import httpx
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_text
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
 
 log = get_logger("reddit")
+
+_UA = "AiApiRadar/0.1 (+https://aiapiradar.cf.whitebite.ru)"
 
 # Subreddits most likely to surface free AI credits / trial offers.
 SUBREDDITS = [
@@ -72,20 +75,13 @@ class RedditCollector(Collector):
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        headers = {"User-Agent": "AiApiRadar/0.1 (+https://aiapiradar.cf.whitebite.ru)"}
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True,
-                                     headers=headers) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
             for i, sub in enumerate(self.subreddits):
                 if i:
                     await asyncio.sleep(2.5)  # Reddit rate-limits bursts (429)
                 url = f"https://www.reddit.com/r/{sub}/new/.rss?limit=50"
-                try:
-                    r = await client.get(url)
-                    if r.status_code == 200:
-                        out.extend(parse_feed(r.content, sub))
-                    else:
-                        log.warning("reddit r/%s -> %s", sub, r.status_code)
-                except Exception:
-                    log.warning("reddit feed failed: r/%s", sub, exc_info=False)
+                text = await fetch_text(url, client=client, ua=_UA)
+                if text is not None:
+                    out.extend(parse_feed(text, sub))
         log.info("reddit collected %d entries", len(out))
         return out

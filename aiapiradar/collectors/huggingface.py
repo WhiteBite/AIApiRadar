@@ -18,6 +18,7 @@ from typing import Iterable
 import httpx
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_json
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -102,12 +103,9 @@ async def _fetch_inference_status(
     client: httpx.AsyncClient, mid: str
 ) -> str | None:
     """GET /api/models/{mid} and return the `inference` field (or None)."""
-    try:
-        r = await client.get(f"{API}/{mid}")
-        if r.status_code == 200:
-            return (r.json().get("inference") or "").lower() or None
-    except Exception:
-        pass
+    data = await fetch_json(f"{API}/{mid}", client=client)
+    if isinstance(data, dict):
+        return (data.get("inference") or "").lower() or None
     return None
 
 
@@ -134,16 +132,14 @@ class HuggingFaceCollector(Collector):
             for org in self.orgs:
                 try:
                     # Step 1: list recent models for this org
-                    r = await client.get(API, params={
+                    models = await fetch_json(API, params={
                         "author": org,
                         "sort": "lastModified",
                         "direction": -1,
                         "limit": self.per_org_limit,
-                    })
-                    if r.status_code != 200:
-                        log.warning("hf org %s -> %s", org, r.status_code)
+                    }, client=client)
+                    if models is None:
                         continue
-                    models: list[dict] = r.json()
 
                     # Step 2: enrich each model with its `inference` status
                     # (field not available in list response, only in /api/models/{id})

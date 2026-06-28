@@ -11,6 +11,7 @@ import httpx
 
 from ..config import get_settings
 from ..core.collector import Collector
+from ..core.fetch import fetch_json
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -83,14 +84,11 @@ class SearchDorksCollector(Collector):
         out: list[Signal] = []
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             for q in self.dorks:
-                try:
-                    r = await client.get(ENDPOINT, params={
-                        "key": s.search_api_key, "cx": s.search_cx, "q": q,
-                        "dateRestrict": "d1", "num": 10,
-                    })
-                    if r.status_code == 200:
-                        out.extend(parse_results(r.json()))
-                except Exception:
-                    log.warning("searchdork failed", exc_info=False)
+                data = await fetch_json(ENDPOINT, params={
+                    "key": s.search_api_key, "cx": s.search_cx, "q": q,
+                    "dateRestrict": "d1", "num": 10,
+                }, client=client)
+                if data is not None:
+                    out.extend(parse_results(data))
         log.info("searchdorks collected %d results", len(out))
         return out

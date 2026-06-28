@@ -17,6 +17,7 @@ from typing import Iterable
 import httpx
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_json
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -63,24 +64,18 @@ class AppStoreCollector(Collector):
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
         seen: set[str] = set()
-        headers = {"User-Agent": "AiApiRadar/0.1"}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True,
-                                         headers=headers) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 for feed_url in FEED_URLS:
-                    try:
-                        r = await client.get(feed_url)
-                        if r.status_code != 200:
-                            log.warning("appstore feed %s -> %s", feed_url, r.status_code)
+                    data = await fetch_json(feed_url, client=client)
+                    if data is None:
+                        continue
+                    for sig in parse_appstore(data):
+                        key = sig.url or sig.raw_text
+                        if key in seen:
                             continue
-                        for sig in parse_appstore(r.json()):
-                            key = sig.url or sig.raw_text
-                            if key in seen:
-                                continue
-                            seen.add(key)
-                            out.append(sig)
-                    except Exception:
-                        log.warning("appstore feed %s failed", feed_url, exc_info=False)
+                        seen.add(key)
+                        out.append(sig)
         except Exception:
             log.warning("appstore collect failed", exc_info=False)
         log.info("appstore collected %d apps", len(out))

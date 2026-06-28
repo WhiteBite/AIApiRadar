@@ -11,6 +11,7 @@ from typing import Iterable
 import httpx
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_json
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -59,24 +60,17 @@ class HackerNewsCollector(Collector):
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        async with httpx.AsyncClient(timeout=self.timeout,
-                                     headers={"User-Agent": "AiApiRadar/0.1"}) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             # keyword queries (stories only)
             for q in self.queries:
-                try:
-                    r = await client.get(API, params={
-                        "query": q, "tags": "story", "hitsPerPage": 20,
-                    })
-                    if r.status_code == 200:
-                        out.extend(parse_results(r.json()))
-                except Exception:
-                    log.warning("hn query failed: %s", q[:30], exc_info=False)
+                data = await fetch_json(API, params={
+                    "query": q, "tags": "story", "hitsPerPage": 20,
+                }, client=client)
+                if data is not None:
+                    out.extend(parse_results(data))
             # newest Show HN sweep (launches, classifier decides)
-            try:
-                r = await client.get(API, params={"tags": "show_hn", "hitsPerPage": 40})
-                if r.status_code == 200:
-                    out.extend(parse_results(r.json()))
-            except Exception:
-                log.warning("hn show_hn sweep failed", exc_info=False)
+            data = await fetch_json(API, params={"tags": "show_hn", "hitsPerPage": 40}, client=client)
+            if data is not None:
+                out.extend(parse_results(data))
         log.info("hackernews collected %d items", len(out))
         return out

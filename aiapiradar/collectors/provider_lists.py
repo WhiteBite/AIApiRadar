@@ -17,6 +17,7 @@ from typing import Iterable
 import httpx
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_json, fetch_text
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -120,30 +121,20 @@ class ProviderListsCollector(Collector):
         self.timeout = timeout
 
     async def _fetch_md(self, client: httpx.AsyncClient) -> list[Signal]:
-        try:
-            r = await client.get(PROVIDERS_MD)
-            if r.status_code == 200:
-                return parse_providers_md(r.text)
-            log.warning("providers.md -> %s", r.status_code)
-        except Exception:
-            log.warning("providers.md fetch failed", exc_info=False)
+        text = await fetch_text(PROVIDERS_MD, client=client)
+        if text is not None:
+            return parse_providers_md(text)
         return []
 
     async def _fetch_prices(self, client: httpx.AsyncClient) -> list[Signal]:
-        try:
-            r = await client.get(LITELLM_PRICES)
-            if r.status_code == 200:
-                return parse_litellm_prices(r.json())
-            log.warning("litellm prices -> %s", r.status_code)
-        except Exception:
-            log.warning("litellm prices fetch failed", exc_info=False)
+        data = await fetch_json(LITELLM_PRICES, client=client)
+        if data is not None:
+            return parse_litellm_prices(data)
         return []
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        headers = {"User-Agent": "AiApiRadar/0.1"}
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True,
-                                     headers=headers) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
             out.extend(await self._fetch_md(client))
             out.extend(await self._fetch_prices(client))
         log.info("provider_lists collected %d entries", len(out))

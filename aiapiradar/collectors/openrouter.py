@@ -13,9 +13,8 @@ from __future__ import annotations
 
 from typing import Iterable
 
-import httpx
-
 from ..core.collector import Collector
+from ..core.fetch import fetch_json
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -57,15 +56,8 @@ class OpenRouterCollector(Collector):
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        headers = {"User-Agent": "AiApiRadar/0.1"}
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
-                r = await client.get(API)
-                if r.status_code == 200:
-                    out = parse_models(r.json())
-                else:
-                    log.warning("openrouter models -> %s", r.status_code)
-        except Exception:
-            log.warning("openrouter collect failed", exc_info=False)
+        data = await fetch_json(API, timeout=self.timeout)
+        if data is not None:
+            out = parse_models(data)
         log.info("openrouter collected %d models", len(out))
         return out

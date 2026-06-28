@@ -10,9 +10,9 @@ import re
 from typing import Iterable
 
 import feedparser
-import httpx
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_text
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -20,6 +20,7 @@ from . import register
 log = get_logger("producthunt")
 
 FEED_URL = "https://www.producthunt.com/feed"
+_UA = "Mozilla/5.0 AiApiRadar/0.1"
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -53,13 +54,8 @@ class ProductHuntCollector(Collector):
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True,
-                                     headers={"User-Agent": "Mozilla/5.0 AiApiRadar/0.1"}) as client:
-            try:
-                r = await client.get(self.feed_url)
-                if r.status_code == 200:
-                    out = parse_feed(r.content)
-            except Exception:
-                log.warning("producthunt feed failed", exc_info=False)
+        text = await fetch_text(self.feed_url, timeout=self.timeout, ua=_UA)
+        if text is not None:
+            out = parse_feed(text)
         log.info("producthunt collected %d entries", len(out))
         return out

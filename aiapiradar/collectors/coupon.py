@@ -18,11 +18,14 @@ import httpx
 from bs4 import BeautifulSoup
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_text
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
 
 log = get_logger("coupon")
+
+_UA = "Mozilla/5.0 AiApiRadar/0.1"
 
 # (source_name, page_url, _reserved).
 # Add new aggregators here — the collector needs no other changes.
@@ -144,19 +147,12 @@ class CouponCollector(Collector):
     async def collect(self) -> Iterable[Signal]:
         """Fetch each aggregator page and emit Signals for outbound offer links."""
         out: list[Signal] = []
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 AiApiRadar/0.1"},
-        ) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
             for agg_name, page_url, _ in self.aggregator_pages:
-                try:
-                    r = await client.get(page_url)
-                    if r.status_code == 200:
-                        signals = _parse_aggregator(r.text, agg_name, page_url)
-                        out.extend(signals)
-                        log.debug("coupon/%s: %d offers", agg_name, len(signals))
-                except Exception:
-                    log.warning("coupon aggregator failed: %s", agg_name, exc_info=False)
+                text = await fetch_text(page_url, client=client, ua=_UA)
+                if text is not None:
+                    signals = _parse_aggregator(text, agg_name, page_url)
+                    out.extend(signals)
+                    log.debug("coupon/%s: %d offers", agg_name, len(signals))
         log.info("coupon collected %d offer links", len(out))
         return out

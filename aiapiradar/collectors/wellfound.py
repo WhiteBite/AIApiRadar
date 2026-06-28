@@ -10,10 +10,10 @@ from __future__ import annotations
 from typing import Iterable
 from urllib.parse import urljoin, urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_text
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -21,6 +21,7 @@ from . import register
 log = get_logger("wellfound")
 
 LISTING_URL = "https://wellfound.com/role/r/machine-learning-engineer"
+_UA = "Mozilla/5.0 AiApiRadar/0.1"
 
 _SELF_HOSTS = {
     "wellfound.com", "angel.co", "angellist.com",
@@ -77,15 +78,8 @@ class WellfoundCollector(Collector):
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True,
-                                     headers={"User-Agent": "Mozilla/5.0 AiApiRadar/0.1"}) as client:
-            try:
-                resp = await client.get(self.listing_url)
-                if resp.status_code == 200:
-                    out = parse_wellfound(resp.text)
-                else:
-                    log.debug("wellfound HTTP %s (likely blocked)", resp.status_code)
-            except Exception:
-                log.debug("wellfound request failed", exc_info=False)
+        text = await fetch_text(self.listing_url, timeout=self.timeout, ua=_UA)
+        if text is not None:
+            out = parse_wellfound(text)
         log.info("wellfound collected %d candidates", len(out))
         return out

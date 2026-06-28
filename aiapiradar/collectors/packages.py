@@ -20,6 +20,7 @@ import feedparser
 import httpx
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_json, fetch_text
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -144,31 +145,20 @@ class PackagesCollector(Collector):
     async def _collect_npm(self, client: httpx.AsyncClient) -> list[Signal]:
         out: list[Signal] = []
         for kw in self.npm_keywords:
-            try:
-                r = await client.get(NPM_SEARCH, params={"text": kw, "size": 20})
-                if r.status_code == 200:
-                    out.extend(parse_npm(r.json()))
-                else:
-                    log.warning("npm search %r -> %s", kw, r.status_code)
-            except Exception:
-                log.warning("npm search failed: %r", kw, exc_info=False)
+            data = await fetch_json(NPM_SEARCH, params={"text": kw, "size": 20}, client=client)
+            if data is not None:
+                out.extend(parse_npm(data))
         return out
 
     async def _collect_pypi(self, client: httpx.AsyncClient) -> list[Signal]:
-        try:
-            r = await client.get(PYPI_RSS)
-            if r.status_code == 200:
-                return parse_pypi_feed(r.content)
-            log.warning("pypi rss -> %s", r.status_code)
-        except Exception:
-            log.warning("pypi rss failed", exc_info=False)
+        text = await fetch_text(PYPI_RSS, client=client)
+        if text is not None:
+            return parse_pypi_feed(text)
         return []
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        headers = {"User-Agent": "AiApiRadar/0.1"}
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True,
-                                     headers=headers) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
             out.extend(await self._collect_npm(client))
             out.extend(await self._collect_pypi(client))
         log.info("packages collected %d entries", len(out))

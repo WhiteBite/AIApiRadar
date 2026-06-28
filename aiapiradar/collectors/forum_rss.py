@@ -114,17 +114,10 @@ class ForumRssCollector(Collector):
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True,
-                                     headers={"User-Agent": "AiApiRadar/0.1"}) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
             for source, url in self.feeds.items():
-                try:
-                    resp = await client.get(url)
-                    resp.raise_for_status()
-                    out.extend(parse_feed(resp.content, source))
-                except Exception:
-                    if source in _RSSHUB_SOURCES:
-                        log.debug("rsshub feed failed: %s", source, exc_info=False)
-                    else:
-                        log.warning("forum feed failed: %s", source, exc_info=False)
+                text = await fetch_text(url, client=client)
+                if text is not None:
+                    out.extend(parse_feed(text, source))
         log.info("forum_rss collected %d entries", len(out))
         return out

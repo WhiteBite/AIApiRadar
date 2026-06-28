@@ -17,6 +17,7 @@ import feedparser
 import httpx
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_text
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -74,14 +75,10 @@ class ChangelogCollector(Collector):
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True,
-                                     headers={"User-Agent": "AiApiRadar/0.1"}) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
             for key, url in self.feeds.items():
-                try:
-                    resp = await client.get(url)
-                    resp.raise_for_status()
-                    out.extend(parse_changelog(resp.content, key))
-                except Exception:
-                    log.debug("changelog feed failed: %s", key, exc_info=False)
+                text = await fetch_text(url, client=client)
+                if text is not None:
+                    out.extend(parse_changelog(text, key))
         log.info("changelog_rss collected %d entries", len(out))
         return out

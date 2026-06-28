@@ -13,11 +13,14 @@ import httpx
 from bs4 import BeautifulSoup
 
 from ..core.collector import Collector
+from ..core.fetch import fetch_text
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
 
 log = get_logger("directories")
+
+_UA = "Mozilla/5.0 AiApiRadar/0.1"
 
 # Listing pages most likely to surface fresh free-tier tools.
 PAGES = {
@@ -95,14 +98,10 @@ class DirectoriesCollector(Collector):
 
     async def collect(self) -> Iterable[Signal]:
         out: list[Signal] = []
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True,
-                                     headers={"User-Agent": "Mozilla/5.0 AiApiRadar/0.1"}) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
             for source, url in self.pages.items():
-                try:
-                    resp = await client.get(url)
-                    resp.raise_for_status()
-                    out.extend(parse_listing(resp.text, url, source))
-                except Exception:
-                    log.warning("directory page failed: %s", source, exc_info=False)
+                text = await fetch_text(url, client=client, ua=_UA)
+                if text is not None:
+                    out.extend(parse_listing(text, url, source))
         log.info("directories collected %d links", len(out))
         return out
