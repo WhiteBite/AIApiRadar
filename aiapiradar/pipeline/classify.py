@@ -199,24 +199,50 @@ class LLMClassifier:
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
         self._fallback = HeuristicClassifier()
-        self._client = None
-        # models to try, in order; ones that hit a daily quota get parked here
-        self._models = list(self.settings.llm_model_chain)
-        self._exhausted: set[str] = set()
+        # Ordered provider list from config. Each entry is a dict:
+        #   {"name": str, "base_url": str, "api_key": str, "models": list[str]}
+        # Only providers with a usable key+base_url are present (see config).
+        self._providers: list[dict] = list(self.settings.llm_providers)
+        # Lazy per-provider OpenAI client cache, keyed by provider name. We
+        # build a client only when a provider is actually reached.
+        self._clients: dict[str, object] = {}
+        # Parked (provider_name, model) pairs that hit a daily quota / 429.
+        self._exhausted: set[tuple[str, str]] = set()
 
-    def _client_lazy(self):
-        if self._client is None:
+    def _client_for(self, provider: dict):
+        """Lazily create and cache the OpenAI client for one provider.
+
+        Each provider gets its own base_url + api_key, so they cannot share a
+        single client. Cached by provider name to avoid re-creating it.
+        """
+        name = provider["name"]
+        client = self._clients.get(name)
+        if client is None:
             from openai import OpenAI  # lazy: only needed when LLM is enabled
 
-            self._client = OpenAI(
-                base_url=self.settings.llm_base_url,
-                api_key=self.settings.llm_api_key,
+            client = OpenAI(
+                base_url=provider["base_url"],
+                api_key=provider["api_key"],
             )
-        return self._client
+            self._clients[name] = client
+        return client
 
-    def _live_models(self) -> list[str]:
-        live = [m for m in self._models if m not in self._exhausted]
-        return live or list(self._models)  # if all parked, retry from scratch
+    def _live_pairs(self) -> list[tuple[dict, str]]:
+        """(provider, model) pairs to try, in priority order.
+
+        Walks providers in order and, within each, its models in order, while
+        skipping pairs already parked as exhausted. If every pair is parked,
+        retry from the full list once — this tolerates transient daily-quota
+        windows (mirrors the previous _live_models "retry from scratch").
+        """
+        all_pairs: list[tuple[dict, str]] = []
+        live: list[tuple[dict, str]] = []
+        for provider in self._providers:
+            for model in provider.get("models", []):
+                all_pairs.append((provider, model))
+                if (provider["name"], model) not in self._exhausted:
+                    live.append((provider, model))
+        return live or all_pairs
 
     @staticmethod
     def _is_quota_error(exc: Exception) -> bool:
@@ -228,15 +254,20 @@ class LLMClassifier:
         return "429" in msg or "quota" in msg or "resource_exhausted" in msg
 
     def _complete(self, system: str, user: str) -> str:
-        """Run one chat completion, rotating models when one hits its quota.
+        """Run one chat completion with provider→model fallback.
 
-        Returns the raw JSON string content. Raises if every model is
-        exhausted so the caller can fall back to the heuristic.
+        Tries each provider in priority order and, within a provider, each of
+        its models. On a quota/429 error the offending (provider, model) pair
+        is parked and we move on; on any OTHER error we log a warning and also
+        move on, so a single misbehaving provider can't sink the whole run.
+        Returns the raw JSON string content. Raises when every provider+model
+        is exhausted/failed so the caller falls back to the heuristic.
         """
-        client = self._client_lazy()
         last_exc: Optional[Exception] = None
-        for model in self._live_models():
+        for provider, model in self._live_pairs():
+            pname = provider["name"]
             try:
+                client = self._client_for(provider)
                 resp = client.chat.completions.create(
                     model=model,
                     messages=[
@@ -250,11 +281,18 @@ class LLMClassifier:
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 if self._is_quota_error(exc):
-                    self._exhausted.add(model)
-                    log.warning("model %s hit quota/429; rotating to next", model)
-                    continue
-                raise
-        raise last_exc or RuntimeError("no LLM models available")
+                    self._exhausted.add((pname, model))
+                    log.warning(
+                        "provider %s model %s hit quota/429; rotating to next",
+                        pname, model,
+                    )
+                else:
+                    log.warning(
+                        "provider %s model %s failed (%s); rotating to next",
+                        pname, model, exc,
+                    )
+                continue
+        raise last_exc or RuntimeError("no LLM providers available")
 
     def classify(self, text: str, url: Optional[str], lang: str, domains: list[str]) -> Classification:
         # cheap gate first: don't spend tokens on obvious noise

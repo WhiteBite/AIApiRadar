@@ -33,6 +33,20 @@ class Settings(BaseSettings):
     # Each Gemini free-tier model has its OWN daily quota, so rotating across
     # them multiplies effective daily capacity.
     llm_fallback_models: str = ""
+    # Extra free LLM providers (all OpenAI-compatible). Empty key = provider skipped.
+    groq_api_key: str = ""
+    gemini_api_key: str = ""
+    mistral_api_key: str = ""
+    cerebras_api_key: str = ""
+    openrouter_api_key: str = ""
+    # Per-provider default model (override via env if a provider changes its lineup).
+    groq_model: str = "llama-3.3-70b-versatile"
+    gemini_model: str = "gemini-2.0-flash"
+    mistral_model: str = "mistral-small-latest"
+    cerebras_model: str = "llama-3.3-70b"
+    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    # Ordered provider priority (csv). "legacy" = the llm_base_url/llm_model/llm_api_key triple.
+    llm_provider_order: str = "legacy,gemini,groq,mistral,cerebras,openrouter"
 
     # Collector API keys (optional; collectors degrade gracefully if absent)
     github_token: str = ""
@@ -96,7 +110,7 @@ class Settings(BaseSettings):
 
     @property
     def has_llm(self) -> bool:
-        return bool(self.llm_api_key)
+        return len(self.llm_providers) > 0
 
     @property
     def llm_model_chain(self) -> list[str]:
@@ -107,6 +121,33 @@ class Settings(BaseSettings):
             if m and m not in chain:
                 chain.append(m)
         return chain
+
+    @property
+    def llm_providers(self) -> list[dict]:
+        """Ordered, ready-to-use LLM providers.
+
+        Each item: {"name": str, "base_url": str, "api_key": str, "models": list[str]}.
+        Only providers whose api_key AND base_url are set are included. Order
+        follows llm_provider_order. "legacy" maps to the llm_base_url/llm_model/
+        llm_api_key triple (with llm_fallback_models as extra models).
+        """
+        catalog = {
+            "legacy": (self.llm_base_url, self.llm_api_key, self.llm_model_chain),
+            "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/", self.gemini_api_key, [self.gemini_model]),
+            "groq": ("https://api.groq.com/openai/v1", self.groq_api_key, [self.groq_model]),
+            "mistral": ("https://api.mistral.ai/v1", self.mistral_api_key, [self.mistral_model]),
+            "cerebras": ("https://api.cerebras.ai/v1", self.cerebras_api_key, [self.cerebras_model]),
+            "openrouter": ("https://openrouter.ai/api/v1", self.openrouter_api_key, [self.openrouter_model]),
+        }
+        out: list[dict] = []
+        for name in [x.strip() for x in self.llm_provider_order.split(",") if x.strip()]:
+            entry = catalog.get(name)
+            if not entry:
+                continue
+            base_url, api_key, models = entry
+            if api_key and base_url:
+                out.append({"name": name, "base_url": base_url, "api_key": api_key, "models": list(models)})
+        return out
 
     @property
     def is_cloudflare(self) -> bool:

@@ -23,6 +23,24 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       AIRADAR_TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       AIRADAR_TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      # Collector keys — empty secret = collector stays a graceful no-op.
+      AIRADAR_GITHUB_TOKEN: ${{ secrets.AIRADAR_GITHUB_TOKEN || github.token }}
+      AIRADAR_SEARCH_API_KEY: ${{ secrets.AIRADAR_SEARCH_API_KEY }}
+      AIRADAR_SEARCH_CX: ${{ secrets.AIRADAR_SEARCH_CX }}
+      AIRADAR_YOUTUBE_API_KEY: ${{ secrets.AIRADAR_YOUTUBE_API_KEY }}
+      AIRADAR_PH_TOKEN: ${{ secrets.AIRADAR_PH_TOKEN }}
+      AIRADAR_TW_BEARER_TOKEN: ${{ secrets.AIRADAR_TW_BEARER_TOKEN }}
+      AIRADAR_FOFA_KEY: ${{ secrets.AIRADAR_FOFA_KEY }}
+      AIRADAR_FOFA_EMAIL: ${{ secrets.AIRADAR_FOFA_EMAIL }}
+      AIRADAR_TG_API_ID: ${{ secrets.AIRADAR_TG_API_ID }}
+      AIRADAR_TG_API_HASH: ${{ secrets.AIRADAR_TG_API_HASH }}
+      # LLM provider keys (multi-provider fallback chain). Empty = skipped.
+      AIRADAR_LLM_API_KEY: ${{ secrets.AIRADAR_LLM_API_KEY }}
+      AIRADAR_GEMINI_API_KEY: ${{ secrets.AIRADAR_GEMINI_API_KEY }}
+      AIRADAR_GROQ_API_KEY: ${{ secrets.AIRADAR_GROQ_API_KEY }}
+      AIRADAR_MISTRAL_API_KEY: ${{ secrets.AIRADAR_MISTRAL_API_KEY }}
+      AIRADAR_CEREBRAS_API_KEY: ${{ secrets.AIRADAR_CEREBRAS_API_KEY }}
+      AIRADAR_OPENROUTER_API_KEY: ${{ secrets.AIRADAR_OPENROUTER_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,6 +68,7 @@ jobs:
           python -m aiapiradar.cli purge-blocked
           python -m aiapiradar.cli discover --limit 40
           python -m aiapiradar.cli enrich --limit 80 --no-crtsh --stale-hours 6
+          python -m aiapiradar.cli reclassify --batch-size 20
           python -m aiapiradar.cli score
 
       - name: Push local SQLite → D1
