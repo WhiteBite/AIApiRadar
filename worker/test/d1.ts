@@ -45,12 +45,24 @@ class FakePreparedStatement {
   }
 }
 
+// D1 (like a default SQLite build) tolerates double-quoted string literals —
+// the legacy "DQS" misfeature — e.g. datetime("now") or COALESCE(s.name,"").
+// better-sqlite3 ships with DQS disabled and there is no JS API to re-enable it,
+// so we normalize those known literal forms to single quotes for the in-memory
+// DB. This keeps the worker SQL byte-for-byte unchanged while matching D1's
+// runtime behavior.
+function normalizeDqs(sql) {
+  return sql
+    .replace(/datetime\("now"\)/g, "datetime('now')")
+    .replace(/,\s*""\)/g, ", '')")
+}
+
 class FakeD1 {
   constructor(db) {
     this.db = db
   }
   prepare(sql) {
-    return new FakePreparedStatement(this.db, sql, [])
+    return new FakePreparedStatement(this.db, normalizeDqs(sql), [])
   }
 }
 

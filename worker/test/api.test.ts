@@ -111,3 +111,41 @@ describe('GET /api/settings', () => {
     expect(body.notify_min_score).toBe(0.7)
   })
 })
+
+describe('GET /api/services/:id', () => {
+  it('returns 200 with domain/offers/signals for seeded service 1', async () => {
+    const res = await get('/api/services/1')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveProperty('domain')
+    expect(body.domain).toBe('example-ai.com')
+    expect(Array.isArray(body.offers)).toBe(true)
+    expect(Array.isArray(body.signals)).toBe(true)
+    expect(body.offers.length).toBeGreaterThan(0)
+  })
+
+  it('returns 404 for a non-existent id', async () => {
+    const res = await get('/api/services/9999')
+    expect(res.status).toBe(404)
+  })
+})
+
+describe('POST /api/offers/:id/vote + GET /api/offers/:id/my-vote', () => {
+  it('records a vote then reads it back', async () => {
+    const voteRes = await app.request(
+      '/api/offers/2/vote',
+      { method: 'POST', body: JSON.stringify({ vote: 1 }), headers: { 'content-type': 'application/json' } },
+      { DB }
+    )
+    expect(voteRes.status).toBe(200)
+    const voteBody = await voteRes.json()
+    expect(voteBody).toHaveProperty('likes')
+    expect(voteBody).toHaveProperty('dislikes')
+    expect(voteBody).toHaveProperty('my_vote')
+
+    const myVoteRes = await get('/api/offers/2/my-vote')
+    expect(myVoteRes.status).toBe(200)
+    const myVoteBody = await myVoteRes.json()
+    expect(myVoteBody).toHaveProperty('my_vote')
+  })
+})
