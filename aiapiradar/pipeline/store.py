@@ -16,6 +16,7 @@ from typing import Optional
 from ..core.signal import Signal as RawSignal
 from ..db.base import Database, json_decode, json_encode
 from ..logging_conf import get_logger
+from ..util.dtutil import to_storage_str as _dt_str, parse_naive as _dt_parse
 from .classify import Classification
 from .normalize import is_blocked_domain, registrable_domain
 
@@ -32,34 +33,6 @@ def compute_lead_hours(first_us, first_agg) -> Optional[float]:
     a = first_us.replace(tzinfo=None) if first_us.tzinfo else first_us
     b = first_agg.replace(tzinfo=None) if first_agg.tzinfo else first_agg
     return round((b - a).total_seconds() / 3600.0, 2)
-
-
-# ─── Datetime ↔ storage string helpers ───────────────────────────────────────
-
-def _dt_str(d: Optional[dt.datetime]) -> Optional[str]:
-    """Datetime → storage string compatible with SQLAlchemy's SQLite format."""
-    if d is None:
-        return None
-    if d.tzinfo is not None:
-        d = d.astimezone(dt.timezone.utc).replace(tzinfo=None)
-    return d.strftime("%Y-%m-%d %H:%M:%S.%f")
-
-
-def _dt_parse(s: Optional[str]) -> Optional[dt.datetime]:
-    """Storage string → naive UTC datetime."""
-    if not s:
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return dt.datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    try:
-        # Last resort: fromisoformat (handles +00:00 suffix)
-        d = dt.datetime.fromisoformat(s)
-        return d.replace(tzinfo=None) if d.tzinfo else d
-    except ValueError:
-        return None
 
 
 # ─── Internal helpers ─────────────────────────────────────────────────────────

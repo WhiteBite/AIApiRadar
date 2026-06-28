@@ -16,6 +16,7 @@ from .config import Settings, get_settings
 from .db.base import Database
 from .logging_conf import get_logger
 from .models import utcnow
+from .util.dtutil import parse_utc as _dt_parse
 
 log = get_logger("scorer")
 
@@ -158,23 +159,6 @@ def score_offer(offer, service, now: dt.datetime,
 
 
 # ─── Database-protocol path ──────────────────────────────────────────────────
-
-def _dt_parse(s: Optional[str]) -> Optional[dt.datetime]:
-    """Parse a stored datetime string → tz-aware UTC datetime."""
-    if not s:
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S",
-                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return dt.datetime.strptime(s, fmt).replace(tzinfo=dt.timezone.utc)
-        except ValueError:
-            continue
-    try:
-        d = dt.datetime.fromisoformat(s)
-        return d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc)
-    except ValueError:
-        return None
-
 
 def _rescore_all_db(db: Database, settings: Optional[Settings] = None) -> int:
     settings = settings or get_settings()

@@ -29,6 +29,7 @@ from .db.base import json_encode
 from .enrich import ProbeResult, probe
 from .logging_conf import get_logger
 from .models import utcnow
+from .util.dtutil import to_storage_str as _dt_str
 from .pipeline.normalize import (
     extract_urls,
     is_blocked_domain,
@@ -55,14 +56,6 @@ _MIN_RETRY_HOURS: list[float] = [1.0, 6.0, 24.0]
 # SSRF / abuse guard: never probe private, loopback or non-public hosts.
 _BLOCK_PROBE_SUFFIXES = (".local", ".internal", ".lan", ".localdomain")
 _BLOCK_PROBE_EXACT = {"localhost"}
-
-
-def _dt_str(d: Optional[dt.datetime]) -> Optional[str]:
-    if d is None:
-        return None
-    if d.tzinfo is not None:
-        d = d.astimezone(dt.timezone.utc).replace(tzinfo=None)
-    return d.strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 def _should_skip_retry(attempts: int, probed_at: Optional[str]) -> bool:

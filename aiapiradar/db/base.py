@@ -205,26 +205,16 @@ def init_db() -> None:
             if stmt:
                 db.run(stmt)
         # ── Incremental migrations ────────────────────────────────────────────
-        # SQLite has no IF NOT EXISTS for ALTER TABLE, so we use try/except.
-        # Each migration is idempotent: re-running init_db() on an up-to-date
-        # schema silently passes (duplicate-column error is swallowed).
-        #
-        # Migration 1: add priority column to domain_candidates (added in v0.2).
-        try:
-            db.run(
-                "ALTER TABLE domain_candidates "
-                "ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'"
-            )
-        except Exception:
-            pass  # column already exists — safe to ignore
-        # Migration 2: add conditions JSON column to offers (structured offer object).
-        try:
-            db.run("ALTER TABLE offers ADD COLUMN conditions TEXT")
-        except Exception:
-            pass  # column already exists — safe to ignore
-        # Migration 3: add topic column to offers (telegram notify routing).
-        try:
-            db.run("ALTER TABLE offers ADD COLUMN topic TEXT")
-        except Exception:
-            pass  # column already exists — safe to ignore
+        # SQLite has no IF NOT EXISTS for ALTER TABLE → idempotent try/except.
+        # Re-running init_db() on an up-to-date schema silently passes.
+        _MIGRATIONS = (
+            "ALTER TABLE domain_candidates ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'",
+            "ALTER TABLE offers ADD COLUMN conditions TEXT",
+            "ALTER TABLE offers ADD COLUMN topic TEXT",
+        )
+        for ddl in _MIGRATIONS:
+            try:
+                db.run(ddl)
+            except Exception:
+                pass  # column already exists — safe to ignore
         db.commit()

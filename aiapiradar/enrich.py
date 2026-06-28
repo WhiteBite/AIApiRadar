@@ -21,6 +21,7 @@ import httpx
 
 from .logging_conf import get_logger
 from .models import utcnow
+from .util.dtutil import to_storage_str as _dt_str, parse_naive as _dt_parse_local
 
 log = get_logger("enrich")
 
@@ -522,32 +523,6 @@ async def crtsh_earliest(domain: str, client: httpx.AsyncClient) -> Optional[dt.
 
 
 # ─── Storage helpers (private) ────────────────────────────────────────────────
-
-def _dt_str(d: Optional[dt.datetime]) -> Optional[str]:
-    """Datetime → storage string (naive UTC, SQLAlchemy-compatible format)."""
-    if d is None:
-        return None
-    if d.tzinfo is not None:
-        d = d.astimezone(dt.timezone.utc).replace(tzinfo=None)
-    return d.strftime("%Y-%m-%d %H:%M:%S.%f")
-
-
-def _dt_parse_local(s: Optional[str]) -> Optional[dt.datetime]:
-    """Storage string → naive UTC datetime (mirror of store._dt_parse)."""
-    if not s:
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S",
-                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return dt.datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    try:
-        d = dt.datetime.fromisoformat(s)
-        return d.replace(tzinfo=None) if d.tzinfo else d
-    except ValueError:
-        return None
-
 
 # ─── New Database-protocol path ───────────────────────────────────────────────
 

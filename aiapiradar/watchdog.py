@@ -17,17 +17,9 @@ from .enrich import enrich_service
 from .logging_conf import get_logger
 from .models import utcnow
 from .scorer import rescore_all
+from .util.dtutil import to_storage_str as _dt_str
 
 log = get_logger("watchdog")
-
-
-def _dt_str(d: Optional[dt.datetime]) -> Optional[str]:
-    """Datetime → storage string (naive UTC, SQLAlchemy-compatible format)."""
-    if d is None:
-        return None
-    if d.tzinfo is not None:
-        d = d.astimezone(dt.timezone.utc).replace(tzinfo=None)
-    return d.strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 async def run_watchdog(

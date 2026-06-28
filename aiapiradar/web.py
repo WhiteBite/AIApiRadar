@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from .db import get_db
 from .db.base import Database, json_decode
+from .util.dtutil import parse_naive as _dt_parse, to_iso as _iso
 from . import sources as sources_mod
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -93,33 +94,6 @@ JOIN services s ON o.service_id = s.id
 
 
 # --- datetime helpers ------------------------------------------------------
-def _dt_parse(s: Optional[str]) -> Optional[dt.datetime]:
-    """Storage TEXT string → naive datetime (templates need real datetimes)."""
-    if not s:
-        return None
-    if isinstance(s, dt.datetime):
-        return s
-    for fmt in (
-        "%Y-%m-%d %H:%M:%S.%f",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S.%f",
-        "%Y-%m-%dT%H:%M:%S",
-    ):
-        try:
-            return dt.datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    try:
-        d = dt.datetime.fromisoformat(s)
-        return d.replace(tzinfo=None) if d.tzinfo else d
-    except ValueError:
-        return None
-
-
-def _iso(s: Optional[str]) -> Optional[str]:
-    """Storage TEXT datetime → ISO-8601 string for JSON (matches old output)."""
-    d = _dt_parse(s)
-    return d.isoformat() if d else None
 
 
 # --- request bodies --------------------------------------------------------
