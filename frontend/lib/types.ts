@@ -121,13 +121,15 @@ export const SOURCE_CATEGORY_MAP: Record<SourceCategory, string[]> = {
     "reddit", "hackernews", "hackernews_ai", "hackernews_show",
     "bilibili_search_api", "bilibili_search_relay", "zhihu_topic_api",
     "csdn_search", "juejin_tag_ai", "weibo_search",
+    "discord_dir",
   ],
   github: ["github", "github_lists", "github_issues", "github_code"],
   telegram: ["telegram", "telegram_ingest"],
   youtube: ["youtube"],
-  producthunt: ["producthunt", "betalist"],
+  producthunt: ["producthunt", "betalist", "ph_upcoming"],
   catalogs: ["directories", "coupon", "openrouter", "packages", "fofa", "leaks",
-    "appsumo", "saasworthy", "futurelist", "uneed"],
+    "appsumo", "saasworthy", "futurelist", "uneed",
+    "yc", "provider_lists", "changelog", "appstore", "wellfound"],
 };
 
 export const SOURCE_CATEGORY_LABELS: Record<SourceCategory, string> = {

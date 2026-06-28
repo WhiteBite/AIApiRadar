@@ -31,10 +31,31 @@ NPM_KEYWORDS = [
     "ai api",
     "llm client",
     "openai compatible",
+    "llm gateway",
+    "ai sdk",
+    "inference api",
 ]
 
 NPM_SEARCH = "https://registry.npmjs.org/-/v1/search"
 PYPI_RSS = "https://pypi.org/rss/packages.xml"
+
+# Any http(s) URL embedded in free-text (descriptions, summaries).
+_URL_RE = re.compile(r"https?://[^\s<>\"')]+", re.IGNORECASE)
+
+
+def _extract_urls(*values: str | None) -> list[str]:
+    """Collect, de-duplicate (order-preserving) http(s) URLs from given texts."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        for match in _URL_RE.findall(value):
+            url = match.rstrip(".,);]")
+            if url and url not in seen:
+                seen.add(url)
+                out.append(url)
+    return out
 
 # Keyword regex used to keep relevant PyPI entries (title/description match).
 _AI_KEYWORD_RE = re.compile(
@@ -45,7 +66,13 @@ _AI_KEYWORD_RE = re.compile(
 
 
 def parse_npm(data: dict, source: str = "npm") -> list[Signal]:
-    """Pure parse: npm search response -> Signals. No network."""
+    """Pure parse: npm search response -> Signals. No network.
+
+    For each package we surface every domain we can find: the homepage and
+    repository links plus any http(s) URL embedded in the description. A
+    separate Signal is emitted per discovered URL so the harvest pipeline picks
+    up each domain; packages with no URL still emit one text-only Signal.
+    """
     out: list[Signal] = []
     for obj in (data or {}).get("objects", []):
         pkg = obj.get("package") or {}
@@ -53,14 +80,26 @@ def parse_npm(data: dict, source: str = "npm") -> list[Signal]:
         if not name:
             continue
         description = pkg.get("description") or ""
-        homepage = (pkg.get("links") or {}).get("homepage")
-        text = f"{name}. {description}".strip()
-        out.append(Signal(
-            source=source,
-            raw_text=text[:2000],
-            url=homepage or None,
-            meta={"package": name, "registry": "npm"},
-        ))
+        links = pkg.get("links") or {}
+        homepage = links.get("homepage")
+        repository = links.get("repository")
+        urls = _extract_urls(homepage, repository, description)
+        text = f"{name}. {description}".strip()[:2000]
+        if urls:
+            for url in urls:
+                out.append(Signal(
+                    source=source,
+                    raw_text=text,
+                    url=url,
+                    meta={"package": name, "registry": "npm"},
+                ))
+        else:
+            out.append(Signal(
+                source=source,
+                raw_text=text,
+                url=None,
+                meta={"package": name, "registry": "npm"},
+            ))
     return out
 
 
@@ -74,6 +113,13 @@ def parse_pypi_feed(content: str | bytes, source: str = "pypi") -> list[Signal]:
         link = getattr(entry, "link", None)
         if not _AI_KEYWORD_RE.search(f"{title} {summary}"):
             continue
+        # Prefer the explicit RSS link; fall back to the first <links> href.
+        if not link:
+            for ref in getattr(entry, "links", []) or []:
+                href = ref.get("href") if isinstance(ref, dict) else None
+                if href:
+                    link = href
+                    break
         text = f"{title}. {summary}".strip()
         out.append(Signal(
             source=source,

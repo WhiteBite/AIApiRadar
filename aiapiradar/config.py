@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     search_api_key: str = ""
     search_cx: str = ""
     youtube_api_key: str = ""
+    # Product Hunt developer token (optional; enables ph_upcoming collector).
+    # Free token at https://www.producthunt.com/v2/oauth/applications.
+    ph_token: str = ""
 
     # Telegram ingest (Telethon user client; optional)
     tg_api_id: int = 0

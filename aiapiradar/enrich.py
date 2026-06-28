@@ -105,6 +105,42 @@ RELAY_STATUS_PATH = "/api/status"   # JSON {data:{version,...}} — relay finger
 RELAY_MODELS_PATH = "/v1/models"    # OpenAI-format model list — offer signal
 RELAY_NOTICE_PATH = "/api/notice"   # operator notice, often "注册即送 $X"
 
+# Candidate pages that may carry an offer when /pricing is empty / a JS SPA.
+# probe() never fetches all 13 — it tries a bounded subset (see probe()).
+OFFER_PATHS = ("/pricing", "/plans", "/billing", "/subscribe", "/upgrade",
+               "/redeem", "/promo", "/coupon", "/referral", "/help", "/faq",
+               "/docs", "/developers")
+
+# Hard ceiling on the number of HTTP GETs a single probe() may make. Bounds the
+# cost of the offer-path sweep + robots/sitemap crawl so one domain can never
+# explode into dozens of requests. Root + offer-paths + sitemap share most of
+# it; a small reserve is kept for the 3 relay-endpoint probes.
+MAX_PROBE_REQUESTS = 10
+_RELAY_RESERVE = 3  # requests held back for _probe_relay_endpoints()
+
+# Path keywords that mark a URL (from robots.txt / sitemap.xml) as offer-bearing.
+_OFFER_URL_RE = re.compile(
+    r"pricing|plans|billing|subscribe|redeem|promo|coupon|trial|credits|free",
+    re.IGNORECASE,
+)
+_SITEMAP_LOC_RE = re.compile(r"<loc>\s*(.*?)\s*</loc>", re.IGNORECASE | re.DOTALL)
+
+
+class _ReqBudget:
+    """Tiny shared counter so a probe never exceeds MAX_PROBE_REQUESTS GETs."""
+
+    __slots__ = ("remaining",)
+
+    def __init__(self, n: int) -> None:
+        self.remaining = n
+
+    def take(self) -> bool:
+        """Consume one request slot. Returns False when the budget is spent."""
+        if self.remaining <= 0:
+            return False
+        self.remaining -= 1
+        return True
+
 
 @dataclass(slots=True)
 class ProbeResult:
@@ -303,38 +339,172 @@ async def _probe_relay_endpoints(domain: str, client: httpx.AsyncClient,
     return extra
 
 
+async def _discover_offer_urls(domain: str, client: httpx.AsyncClient,
+                               budget: "_ReqBudget | None" = None) -> list[str]:
+    """Crawl robots.txt + sitemap.xml to find offer-bearing URLs.
+
+    Used as a last resort when the fixed OFFER_PATHS sweep found no pricing
+    triggers — e.g. a site whose offer lives at a non-standard path that's only
+    discoverable via its sitemap. Returns absolute URLs whose path matches an
+    offer keyword (pricing/plans/billing/redeem/trial/credits/free/…), capped at
+    5. Fully guarded: any failure (missing robots, 404 sitemap, bad XML) yields
+    an empty/short list and never raises.
+    """
+    def _take() -> bool:
+        return budget.take() if budget is not None else True
+
+    sitemaps: list[str] = []
+
+    # robots.txt → collect any "Sitemap:" directives.
+    if _take():
+        try:
+            r = await client.get(f"https://{domain}/robots.txt")
+            if r.status_code == 200:
+                for line in (r.text or "").splitlines():
+                    line = line.strip()
+                    if line.lower().startswith("sitemap:"):
+                        sm = line.split(":", 1)[1].strip()
+                        if sm:
+                            sitemaps.append(sm)
+        except Exception:
+            pass
+
+    # Always also try the conventional sitemap location.
+    sitemaps.append(f"https://{domain}/sitemap.xml")
+
+    locs: list[str] = []
+    seen: set[str] = set()
+    for sm in sitemaps:
+        if sm in seen:
+            continue
+        seen.add(sm)
+        if not _take():
+            break
+        try:
+            r = await client.get(sm)
+            if r.status_code == 200:
+                for m in _SITEMAP_LOC_RE.finditer(r.text or ""):
+                    loc = m.group(1).strip()
+                    if loc:
+                        locs.append(loc)
+        except Exception:
+            continue
+
+    out: list[str] = []
+    for loc in locs:
+        try:
+            path = httpx.URL(loc).path or ""
+        except Exception:
+            path = loc
+        if _OFFER_URL_RE.search(path) and loc not in out:
+            out.append(loc)
+            if len(out) >= 5:
+                break
+    return out
+
+
 async def probe(domain: str, client: httpx.AsyncClient) -> ProbeResult:
     res = ProbeResult()
     blob = ""
-    try:
-        r = await client.get(f"https://{domain}/")
-        res.status = r.status_code
-        res.alive = r.status_code < 500
-        text = r.text if r.status_code < 400 else ""
-        res.title = _title(text)
-        res.engine = detect_engine(text, dict(r.headers))
-        res.description = _make_description(text)
-        blob += " " + _visible_text(text)
-    except Exception:
-        log.debug("probe root failed for %s", domain, exc_info=False)
-    try:
-        r = await client.get(f"https://{domain}/pricing")
-        if r.status_code == 200:
-            res.has_pricing = True
-            low = r.text.lower()
-            res.pricing_triggers = any(t in low for t in PRICING_TRIGGERS)
-            blob += " " + _visible_text(r.text)
+    # Reserve a few slots for the relay-endpoint probe; the root fetch + the
+    # offer-path sweep + the sitemap crawl share the rest so a single probe
+    # stays within MAX_PROBE_REQUESTS total GETs.
+    budget = _ReqBudget(MAX_PROBE_REQUESTS - _RELAY_RESERVE)
+
+    if budget.take():
+        try:
+            r = await client.get(f"https://{domain}/")
+            res.status = r.status_code
+            res.alive = r.status_code < 500
+            text = r.text if r.status_code < 400 else ""
+            res.title = _title(text)
+            res.engine = detect_engine(text, dict(r.headers))
+            res.description = _make_description(text)
+            blob += " " + _visible_text(text)
+        except Exception:
+            log.debug("probe root failed for %s", domain, exc_info=False)
+
+    async def _scan_offer_path(path: str) -> bool:
+        """Fetch one offer path; fold any 200 content into the result/blob.
+
+        Returns True when the page returned 200 with real content (so the caller
+        can decide whether fallbacks are still needed). Mirrors the original
+        /pricing handling: a 200 sets has_pricing, trigger words set
+        pricing_triggers, and the visible text feeds model/amount detection.
+        """
+        nonlocal blob
+        if not budget.take():
+            return False
+        try:
+            r = await client.get(f"https://{domain}{path}")
+        except Exception:
+            return False
+        if r.status_code != 200:
+            return False
+        text = r.text or ""
+        res.has_pricing = True
+        low = text.lower()
+        if any(t in low for t in PRICING_TRIGGERS):
+            res.pricing_triggers = True
+        if text.strip():
+            blob += " " + _visible_text(text)
             if not res.description:
-                res.description = _make_description(r.text)
-    except Exception:
-        pass
-    # Relay-endpoint probe: skip only when /pricing already gave a rich offer
-    # (has pricing triggers AND a known relay engine). Otherwise try the
+                res.description = _make_description(text)
+            return True
+        return False
+
+    # Bounded offer-path sweep. Always try the two most common pages; only fall
+    # back to the rarer ones if neither yielded real content. Stop the moment a
+    # trigger word is found, and never exceed the shared request budget.
+    got_primary = False
+    for path in ("/pricing", "/plans"):
+        if await _scan_offer_path(path):
+            got_primary = True
+        if res.pricing_triggers:
+            break
+    if not res.pricing_triggers and not got_primary:
+        for path in ("/billing", "/subscribe", "/redeem"):
+            await _scan_offer_path(path)
+            if res.pricing_triggers:
+                break
+
+    # Relay-endpoint probe: skip only when the offer-path sweep already gave a
+    # rich offer (pricing triggers AND a known relay engine). Otherwise try the
     # endpoints — this is where silent relays and empty-/pricing sites reveal
     # themselves. Keeps requests off clearly-commercial sites with full pricing.
     if not (res.has_pricing and res.pricing_triggers and res.engine):
         blob += await _probe_relay_endpoints(domain, client, res)
-    # Facts parsed off the page text (title + body + pricing + relay endpoints).
+
+    # Last resort: if nothing so far surfaced a trigger, mine robots.txt and the
+    # sitemap for offer URLs at non-standard paths and scan up to 3 of them.
+    # Guarded + budget-bounded so it can never explode the request count.
+    if not res.pricing_triggers and budget.remaining > 0:
+        try:
+            offer_urls = await _discover_offer_urls(domain, client, budget)
+        except Exception:
+            offer_urls = []
+        for url in offer_urls[:3]:
+            if not budget.take():
+                break
+            try:
+                r = await client.get(url)
+            except Exception:
+                continue
+            if r.status_code != 200:
+                continue
+            text = r.text or ""
+            res.has_pricing = True
+            low = text.lower()
+            if any(t in low for t in PRICING_TRIGGERS):
+                res.pricing_triggers = True
+            if text.strip():
+                blob += " " + _visible_text(text)
+                if not res.description:
+                    res.description = _make_description(text)
+            if res.pricing_triggers:
+                break
+
+    # Facts parsed off the page text (title + body + offer pages + relay endpoints).
     fact_blob = f"{res.title or ''} {res.description or ''} {res.notice or ''} {blob}"
     res.models = detect_models(fact_blob) or res.models
     res.amount = detect_amount(fact_blob)

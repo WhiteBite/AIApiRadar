@@ -51,6 +51,13 @@ _COLLECTOR_META: dict[str, dict] = {
     "packages":     {"label": "npm / PyPI (AI SDK пакеты)",     "dot": "zinc",   "requires": None},
     "fofa":         {"label": "FOFA (favicon-hash сканер)",     "dot": "red",    "requires": "AIRADAR_FOFA_KEY"},
     "leaks":        {"label": "Gists / Pastebin (утечки)",      "dot": "zinc",   "requires": "AIRADAR_GITHUB_TOKEN"},
+    "yc":           {"label": "Y Combinator (AI-стартапы)",     "dot": "orange", "requires": None},
+    "provider_lists": {"label": "Provider-листы (litellm)",     "dot": "violet", "requires": None},
+    "changelog_rss": {"label": "Changelog/blog RSS (платформы)", "dot": "lime",  "requires": None},
+    "appstore":     {"label": "App Store (новые AI-приложения)", "dot": "blue",  "requires": None},
+    "ph_upcoming":  {"label": "Product Hunt (newest/upcoming)",  "dot": "red",   "requires": "AIRADAR_PH_TOKEN"},
+    "wellfound":    {"label": "Wellfound (AI-стартапы, ML-вакансии)", "dot": "lime", "requires": None},
+    "discord_dir":  {"label": "Discord-каталоги (disboard)",     "dot": "indigo", "requires": None},
 }
 
 

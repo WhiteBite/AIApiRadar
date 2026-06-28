@@ -18,6 +18,7 @@ from . import register
 from .certstream import (  # reuse existing keyword filter + TLD harvest config
     ALWAYS_HARVEST_TLDS,
     _has_always_harvest_tld,
+    _strip_subdomain_signal,
     domain_matches,
 )
 
@@ -40,6 +41,13 @@ SEARCH_PATTERNS = [
 # a discovery candidate, even without an AI keyword in the name. Derived from
 # certstream.ALWAYS_HARVEST_TLDS so the list is never duplicated.
 HARVEST_PATTERNS = ["%" + tld for tld in ALWAYS_HARVEST_TLDS]
+
+# Subdomain-signal patterns — crt.sh wildcard queries targeting common API /
+# commerce subdomains (api.foo.com, console.foo.com, ...). These mirror
+# certstream's subdomain-signal path: a cert exposing one of these hosts is
+# almost always a developer platform, even without an AI keyword in the name.
+# Matches are stripped back to the registrable domain before emission.
+SUBDOMAIN_PATTERNS = ["api.%", "console.%", "studio.%", "dashboard.%"]
 
 CRTSH_URL = "https://crt.sh/"
 
@@ -131,6 +139,43 @@ class CrtshCollector(Collector):
                                     meta={"service_candidate": True},
                                 ))
                                 harvest_count += 1
+                        rows += 1
+                except Exception:
+                    log.warning("crtsh pattern %s failed", pattern, exc_info=False)
+
+            # Path 3: subdomain-signal patterns → service_candidate only.
+            # crt.sh returns the full SAN host (e.g. api.foobar.com); strip the
+            # signal prefix back to the registrable domain so the probe targets
+            # the real service, and dedup on the stripped value.
+            for pattern in SUBDOMAIN_PATTERNS:
+                try:
+                    r = await client.get(CRTSH_URL, params={
+                        "q": pattern,
+                        "output": "json",
+                        "exclude": "expired",
+                    })
+                    if r.status_code != 200:
+                        continue
+                    rows = 0
+                    for entry in r.json() or []:
+                        if rows >= max_per_pattern:
+                            break
+                        for name_val in (entry.get("name_value") or "").split("\n"):
+                            host = name_val.strip().lstrip("*.")
+                            if not host:
+                                continue
+                            dom = _strip_subdomain_signal(host)
+                            if dom in seen:
+                                continue
+                            seen.add(dom)
+                            out.append(Signal(
+                                source=self.name,
+                                raw_text=dom,
+                                url=f"https://{dom}",
+                                source_url=f"https://crt.sh/?q={dom}",
+                                meta={"service_candidate": True},
+                            ))
+                            harvest_count += 1
                         rows += 1
                 except Exception:
                     log.warning("crtsh pattern %s failed", pattern, exc_info=False)

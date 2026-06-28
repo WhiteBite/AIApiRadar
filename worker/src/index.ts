@@ -266,6 +266,13 @@ const COLLECTOR_META: Record<string, { label: string; dot: string; requires: str
   packages: { label: 'npm / PyPI (AI SDK пакеты)', dot: 'zinc', requires: null },
   fofa: { label: 'FOFA (favicon-hash сканер)', dot: 'red', requires: 'AIRADAR_FOFA_KEY' },
   leaks: { label: 'Gists / Pastebin (утечки)', dot: 'zinc', requires: 'AIRADAR_GITHUB_TOKEN' },
+  yc: { label: 'Y Combinator (AI-стартапы)', dot: 'orange', requires: null },
+  provider_lists: { label: 'Provider-листы (litellm)', dot: 'violet', requires: null },
+  changelog_rss: { label: 'Changelog/blog RSS (платформы)', dot: 'lime', requires: null },
+  appstore: { label: 'App Store (новые AI-приложения)', dot: 'blue', requires: null },
+  ph_upcoming: { label: 'Product Hunt (newest/upcoming)', dot: 'red', requires: 'AIRADAR_PH_TOKEN' },
+  wellfound: { label: 'Wellfound (AI-стартапы, вакансии ML)', dot: 'lime', requires: null },
+  discord_dir: { label: 'Discord-каталоги (disboard)', dot: 'indigo', requires: null },
 }
 
 const STREAM_COLLECTORS = new Set(['certstream', 'telegram'])

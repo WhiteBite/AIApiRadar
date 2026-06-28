@@ -55,6 +55,10 @@ FEEDS = {
     "csdn_search":           _rsshub("/csdn/search/免费API"),
     "juejin_tag_ai":         _rsshub("/juejin/tag/AI"),
     "weibo_search":          _rsshub("/weibo/search/topics/免费API"),
+    "xiaohongshu_search":    _rsshub("/xiaohongshu/search/免费API"),
+    "douyin_search":         _rsshub("/douyin/keyword/免费API"),
+    "juejin_tag_llm":        _rsshub("/juejin/tag/LLM"),
+    "csdn_search_relay":     _rsshub("/csdn/search/中转站"),
 }
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -67,6 +71,10 @@ _RSSHUB_SOURCES = frozenset({
     "csdn_search",
     "juejin_tag_ai",
     "weibo_search",
+    "xiaohongshu_search",
+    "douyin_search",
+    "juejin_tag_llm",
+    "csdn_search_relay",
 })
 
 

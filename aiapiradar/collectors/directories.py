@@ -39,6 +39,8 @@ PAGES = {
     # BANDHACK26-style codes are published as sponsor perks for hackathon teams
     "lablab_hackathons": "https://lablab.ai/event",
     "devpost":           "https://devpost.com/hackathons",
+    "devpost_hackathons": "https://devpost.com/hackathons?status[]=open",
+    "lablab_events":      "https://lablab.ai/event",
 }
 
 _SELF_HOSTS = {

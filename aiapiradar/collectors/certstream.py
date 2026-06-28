@@ -45,7 +45,21 @@ _DENY = ("apigee", "gateway.fb", "googleapis", "api.telegram")
 # TLDs where ~90% of new domains ARE AI/tech products.
 # Every new domain on these TLDs goes straight into the discovery queue so the
 # probe worker can assess it, regardless of whether its name contains a keyword.
-ALWAYS_HARVEST_TLDS = (".ai", ".io", ".app", ".dev")
+# Zone rationale:
+#   .ai/.io/.app/.dev   — the established AI/dev startup zones (original set).
+#   .so/.run/.cloud     — increasingly used by infra/SaaS and deploy platforms.
+#   .bot/.chat          — almost exclusively conversational-AI / agent products.
+#   .tools/.build/.tech — common for developer tooling and API/platform launches.
+# .co/.space are deliberately kept OUT for now: too noisy (generic registrations).
+ALWAYS_HARVEST_TLDS = (".ai", ".io", ".app", ".dev", ".so", ".run",
+                       ".cloud", ".bot", ".chat", ".tools", ".build", ".tech")
+
+# Subdomain prefixes that strongly hint "this is an API / commerce product",
+# even when the registrable domain name carries no AI keyword. A cert whose SAN
+# list contains e.g. api.foobar.com / console.foobar.com / billing.foobar.com is
+# almost always a developer platform worth probing.
+SUBDOMAIN_SIGNALS = ("api.", "console.", "dashboard.", "studio.",
+                     "playground.", "billing.", "developer.", "developers.")
 
 
 def domain_matches(domain: str) -> bool:
@@ -60,6 +74,24 @@ def _has_always_harvest_tld(domain: str) -> bool:
     """Return True if the registrable domain ends with one of ALWAYS_HARVEST_TLDS."""
     d = domain.lower().lstrip("*.")
     return any(d.endswith(tld) for tld in ALWAYS_HARVEST_TLDS)
+
+
+def _has_subdomain_signal(domain: str) -> bool:
+    """Return True if the host's first label is a known API/commerce signal."""
+    d = domain.lower().lstrip("*.")
+    return any(d.startswith(sig) for sig in SUBDOMAIN_SIGNALS)
+
+
+def _strip_subdomain_signal(domain: str) -> str:
+    """Strip a leading signal label (api./console./...) to the registrable domain.
+
+    e.g. "api.foobar.com" -> "foobar.com". Only strips when the first label is a
+    known signal prefix; otherwise returns the cleaned domain unchanged.
+    """
+    d = domain.lower().lstrip("*.")
+    if _has_subdomain_signal(d) and "." in d:
+        return d.split(".", 1)[1]
+    return d
 
 
 @register
@@ -92,16 +124,22 @@ class CertStreamCollector(Collector):
         with cls._lock:
             for dom in domains:
                 clean = dom.lstrip("*.")
-                if clean in cls._seen:
-                    continue
                 if domain_matches(dom):
                     # Keyword match: strong signal, classify immediately.
+                    if clean in cls._seen:
+                        continue
                     cls._seen.add(clean)
                     cls._buffer.append(clean)
-                elif _has_always_harvest_tld(dom):
-                    # TLD-only harvest: brandable name, probe worker decides.
-                    cls._seen.add(clean)
-                    cls._harvest_buffer.append(clean)
+                elif _has_always_harvest_tld(dom) or _has_subdomain_signal(dom):
+                    # TLD-only OR subdomain-signal harvest: brandable name /
+                    # developer platform, probe worker decides. Harvest the
+                    # registrable domain (strip leading api./console./... label)
+                    # so the probe targets the real service, and dedup on it.
+                    target = _strip_subdomain_signal(dom)
+                    if target in cls._seen:
+                        continue
+                    cls._seen.add(target)
+                    cls._harvest_buffer.append(target)
 
     @classmethod
     def _run_ws(cls) -> None:  # pragma: no cover - network loop
