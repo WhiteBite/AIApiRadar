@@ -65,8 +65,10 @@ jobs:
       - name: Ensure new offer columns in D1 (before pulling schema)
         continue-on-error: true
         run: |
-          npx --yes wrangler@4 d1 execute aiapiradar --remote --command "ALTER TABLE offers ADD COLUMN conditions TEXT;"
-          npx --yes wrangler@4 d1 execute aiapiradar --remote --command "ALTER TABLE offers ADD COLUMN topic TEXT;"
+          # Each ALTER is independent: `|| true` so a pre-existing column (which
+          # makes wrangler exit non-zero) under `bash -e` doesn't abort the rest.
+          npx --yes wrangler@4 d1 execute aiapiradar --remote --command "ALTER TABLE offers ADD COLUMN conditions TEXT;" || true
+          npx --yes wrangler@4 d1 execute aiapiradar --remote --command "ALTER TABLE offers ADD COLUMN topic TEXT;" || true
 
       - name: Pull current D1 → local SQLite
         run: |
