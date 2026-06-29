@@ -13,7 +13,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       # The whole Python pipeline runs against a local SQLite (the proven path);
       # we sync to/from Cloudflare D1 at the boundaries using wrangler.
