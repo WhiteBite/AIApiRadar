@@ -59,7 +59,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: worker/package-lock.json
 
@@ -72,9 +72,10 @@ jobs:
 
       - name: Install worker deps
         working-directory: worker
-        # --omit=dev: the bundle only needs `hono` (a dependency); skip dev/test
-        # deps (vitest, better-sqlite3 native module) to keep deploy fast + safe.
-        run: npm ci --omit=dev
+        # npm install (not ci): Windows-generated lockfile omits Linux-only
+        # optional deps (@emnapi/*), which makes `npm ci` fail on the runner.
+        # wrangler 4.x requires Node >= 22 — matched by setup-node above.
+        run: npm install --omit=dev --no-audit --no-fund
 
       - name: Create votes table in D1
         uses: cloudflare/wrangler-action@v3
