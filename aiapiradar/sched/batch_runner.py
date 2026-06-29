@@ -96,7 +96,10 @@ async def run_batch(budget=None) -> dict:
     # ── Maintenance: one pass each, bounded so the batch stays predictable ──
     try:
         from ..watchdog import run_watchdog
-        stats["enrich"] = await run_watchdog(limit=20, stale_hours=24.0)
+        # with_crtsh=False: crt.sh hard-rate-limits shared CI IPs (429), so a
+        # per-domain age lookup just burns the timeout for no data. The hourly
+        # `enrich --no-crtsh` step covers enrichment; skip crt.sh here too.
+        stats["enrich"] = await run_watchdog(limit=20, stale_hours=24.0, with_crtsh=False)
     except Exception:  # pragma: no cover - defensive, keep batch going
         log.exception("batch watchdog failed")
 
