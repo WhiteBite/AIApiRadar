@@ -144,6 +144,12 @@ export default function FeedPage() {
     if (filters.engine) list = list.filter((o: Offer) => o.engine === filters.engine);
     if (filters.noReferral) list = list.filter((o: Offer) => !o.referral_required);
 
+    // Скрыть model_release из всех вкладок кроме dead — это новости о выходе
+    // моделей, а не actionable API-офферы (hf/deepseek-ai × 5 и подобное).
+    if (filters.tab !== "dead") {
+      list = list.filter((o: Offer) => o.type !== "model_release");
+    }
+
     // Дедуп по домену: один лучший оффер на домен (по score). Не для вкладки dead.
     if (filters.tab !== "dead") {
       const bestByDomain = new Map<string, Offer>();
