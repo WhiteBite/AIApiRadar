@@ -7,6 +7,7 @@ offers.
 """
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 from typing import Iterable
@@ -16,6 +17,7 @@ import httpx
 
 from ..config import get_settings
 from ..core.collector import Collector
+from ..core.fetch import fetch_text
 from ..core.signal import Signal
 from ..logging_conf import get_logger
 from . import register
@@ -108,16 +110,19 @@ class ForumRssCollector(Collector):
     kind = "rss"
     interval = 600
 
-    def __init__(self, feeds: dict[str, str] | None = None, timeout: float = 20.0):
+    def __init__(self, feeds: dict[str, str] | None = None, timeout: float = 10.0):
         self.feeds = feeds or FEEDS
         self.timeout = timeout
 
     async def collect(self) -> Iterable[Signal]:
-        out: list[Signal] = []
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            for source, url in self.feeds.items():
+            async def _one(source: str, url: str) -> list[Signal]:
                 text = await fetch_text(url, client=client)
-                if text is not None:
-                    out.extend(parse_feed(text, source))
+                return parse_feed(text, source) if text is not None else []
+
+            results = await asyncio.gather(
+                *(_one(source, url) for source, url in self.feeds.items())
+            )
+        out: list[Signal] = [sig for group in results for sig in group]
         log.info("forum_rss collected %d entries", len(out))
         return out

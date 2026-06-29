@@ -10,6 +10,7 @@ and any downstream callers that supply their own HTML + brand).
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Iterable
 from urllib.parse import urlparse
@@ -140,19 +141,24 @@ class CouponCollector(Collector):
     kind = "scraper"
     interval = 7200
 
-    def __init__(self, aggregator_pages=None, timeout: float = 25.0):
+    def __init__(self, aggregator_pages=None, timeout: float = 12.0):
         self.aggregator_pages = aggregator_pages or AGGREGATOR_PAGES
         self.timeout = timeout
 
     async def collect(self) -> Iterable[Signal]:
         """Fetch each aggregator page and emit Signals for outbound offer links."""
-        out: list[Signal] = []
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            for agg_name, page_url, _ in self.aggregator_pages:
+            async def _one(agg_name: str, page_url: str) -> list[Signal]:
                 text = await fetch_text(page_url, client=client, ua=_UA)
-                if text is not None:
-                    signals = _parse_aggregator(text, agg_name, page_url)
-                    out.extend(signals)
-                    log.debug("coupon/%s: %d offers", agg_name, len(signals))
+                if text is None:
+                    return []
+                signals = _parse_aggregator(text, agg_name, page_url)
+                log.debug("coupon/%s: %d offers", agg_name, len(signals))
+                return signals
+
+            results = await asyncio.gather(
+                *(_one(agg_name, page_url) for agg_name, page_url, _ in self.aggregator_pages)
+            )
+        out: list[Signal] = [sig for group in results for sig in group]
         log.info("coupon collected %d offer links", len(out))
         return out

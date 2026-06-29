@@ -80,6 +80,18 @@ BLOCKED_DOMAINS = frozenset({
     "surge.sh",
     "glitch.me",
     "repl.co",
+    # Retail marketplaces — a linked product page is never an AI service. These
+    # show up when a forum/reddit post about hardware or gadgets links a store.
+    # (amazon.com is intentionally NOT here — it's AWS, a legit seeded service.)
+    "ebay.com",
+    "aliexpress.com",
+    "alibaba.com",
+    "taobao.com",
+    "walmart.com",
+    "etsy.com",
+    "wildberries.ru",
+    "ozon.ru",
+    "avito.ru",
 })
 
 

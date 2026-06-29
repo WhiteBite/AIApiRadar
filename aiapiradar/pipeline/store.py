@@ -17,7 +17,7 @@ from ..core.signal import Signal as RawSignal
 from ..db.base import Database, json_decode, json_encode
 from ..logging_conf import get_logger
 from ..util.dtutil import to_storage_str as _dt_str, parse_naive as _dt_parse
-from .classify import Classification
+from .classify import Classification, is_plausible_offer
 from .normalize import is_blocked_domain, registrable_domain
 
 log = get_logger("store")
@@ -210,7 +210,18 @@ def persist(
     service_id: Optional[int] = None
     offer_id: Optional[int] = None
 
-    if clf.is_offer and clf.confidence >= min_confidence and domains:
+    # Sanity gate: reject offers whose parsed amount is implausible for their
+    # type (a product/hardware price misread as a free-credit amount). The
+    # signal is still recorded below, but no Service/Offer is created.
+    implausible = clf.is_offer and not is_plausible_offer(clf)
+    if implausible:
+        log.debug(
+            "dropping implausible offer: %s amount=%s type=%s",
+            domains[0] if domains else None, clf.amount, clf.offer_type,
+        )
+        stats["implausible"] = 1
+
+    if clf.is_offer and not implausible and clf.confidence >= min_confidence and domains:
         service_id = _get_or_create_service(db, domains[0], clf)
         offer_id, created = _get_or_create_offer(db, service_id, clf, raw.url)
         stats["offers_created"] = int(created)

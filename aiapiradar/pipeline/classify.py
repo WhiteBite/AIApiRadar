@@ -69,6 +69,35 @@ class Classification(BaseModel):
         return cls(is_offer=False, confidence=0.0)
 
 
+# Implausible free-offer ceiling (USD) per offer type. Real free trials / relay
+# credits top out in the low hundreds ($200 is already generous). A USD amount
+# above this for a trial/relay almost always means a product/hardware price was
+# misparsed as the offer amount (e.g. a "$2500 budget hardware" reddit post that
+# links ebay.com). Grants legitimately run large (cloud startup credits) and are
+# therefore exempt.
+_MAX_PLAUSIBLE_USD = {
+    "saas_trial": 1000.0,
+    "relay": 1000.0,
+}
+
+
+def is_plausible_offer(clf: "Classification") -> bool:
+    """False only for a clear amount misparse; True otherwise.
+
+    Guards against product/hardware prices being read as free-credit amounts.
+    Applies uniformly to heuristic and LLM classifications. Conservative: only
+    fires for USD amounts above the per-type ceiling, so credits/days/months and
+    grants are never rejected here.
+    """
+    if not clf.is_offer or clf.amount is None:
+        return True
+    ceiling = _MAX_PLAUSIBLE_USD.get(clf.offer_type)
+    if ceiling is None:
+        return True
+    is_usd = clf.currency == "USD" or clf.unit == "usd"
+    return not (is_usd and clf.amount > ceiling)
+
+
 def _parse_amount(text: str) -> tuple[Optional[float], Optional[str]]:
     for rx in _AMOUNT_RES:
         m = rx.search(text)

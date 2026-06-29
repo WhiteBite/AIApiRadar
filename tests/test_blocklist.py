@@ -74,3 +74,64 @@ def test_pipeline_keeps_real_domain_signal(db_env):
             "SELECT COUNT(*) AS n FROM services WHERE canonical_domain = ?",
             ["verdent.ai"],
         )[0]["n"] == 1
+
+
+# --- retail marketplaces are blocked (never AI services) -------------------
+@pytest.mark.parametrize(
+    "domain",
+    ["ebay.com", "www.ebay.com", "aliexpress.com", "taobao.com", "walmart.com",
+     "etsy.com", "wildberries.ru"],
+)
+def test_retail_marketplaces_blocked(domain):
+    assert normalize.is_blocked_domain(domain) is True
+
+
+def test_amazon_not_blocked_aws():
+    # amazon.com stays allowed on purpose — it's AWS, a legit seeded service.
+    assert normalize.is_blocked_domain("amazon.com") is False
+
+
+# --- is_plausible_offer: implausible amounts are a misparse ----------------
+def _clf(**kw):
+    from aiapiradar.pipeline.classify import Classification
+    base = dict(is_offer=True, offer_type="saas_trial", amount=2500.0,
+                currency="USD", unit="usd", confidence=0.8)
+    base.update(kw)
+    return Classification(**base)
+
+
+def test_is_plausible_offer_rejects_big_usd_trial():
+    from aiapiradar.pipeline.classify import is_plausible_offer
+    assert is_plausible_offer(_clf(offer_type="saas_trial", amount=2500.0)) is False
+    assert is_plausible_offer(_clf(offer_type="relay", amount=5000.0)) is False
+
+
+def test_is_plausible_offer_accepts_normal_amounts():
+    from aiapiradar.pipeline.classify import is_plausible_offer
+    assert is_plausible_offer(_clf(amount=200.0)) is True       # typical trial
+    assert is_plausible_offer(_clf(amount=None)) is True        # no amount
+    # grants legitimately run large (cloud startup credits) — never rejected
+    assert is_plausible_offer(_clf(offer_type="grant", amount=100000.0)) is True
+    # credits unit (not USD) is never rejected by the USD ceiling
+    assert is_plausible_offer(_clf(amount=50000.0, currency=None, unit="credits")) is True
+
+
+def test_pipeline_rejects_implausible_amount(db_env):
+    """The ebay/$2500 scenario: a hardware price misread as a trial → no offer."""
+    from aiapiradar.pipeline.pipeline import Pipeline
+    from aiapiradar.db import get_db
+
+    pipe = Pipeline(classifier=HeuristicClassifier())
+    signals = [
+        Signal(
+            source="reddit",
+            raw_text="running glm on budget hardware $2500 free trial included https://hardware-shop.dev",
+            url="https://hardware-shop.dev",
+            source_url="https://reddit.com/r/localllama/abc",
+        ),
+    ]
+    stats = pipe.process_signals(signals)
+
+    assert stats.get("implausible", 0) == 1
+    with get_db() as db:
+        assert db.execute("SELECT COUNT(*) AS n FROM offers")[0]["n"] == 0

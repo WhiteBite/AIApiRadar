@@ -41,15 +41,14 @@ QUERIES = [
 ]
 
 # Code search queries targeting relay/gateway base_url patterns.
-# These fire only when a GitHub token is available.
+# These fire only when a GitHub token is available. Kept lean (3 queries) to
+# stay fast under the 10 req/min code-search rate limit.
 CODE_QUERIES = [
     # OpenAI-compatible base_url pointing at non-official hosts
     'base_url="https://" extension:py extension:js extension:ts -user:openai -user:anthropic',
     'OPENAI_BASE_URL extension:env extension:yaml extension:yml -path:*.lock',
-    'OPENAI_API_BASE "v1/chat/completions" extension:py extension:js',
-    # new-api / one-api operators posting their deployment URLs in issues/docs
+    # new-api / one-api operators posting their deployment URLs in docs
     '"new-api" base_url in:file extension:md extension:txt',
-    '"one-api" "v1" "free" in:file extension:md',
 ]
 
 # Relay-engine repos where operators post their deployment URLs in issues.
@@ -59,7 +58,8 @@ RELAY_REPOS = [
     "sub2api/sub2api",
 ]
 
-# Search terms that pull issues with deployment URLs.
+# Terms that pull issues with deployment URLs. Combined into ONE OR-query per
+# repo (instead of one request per term) to cut serial wall-time in CI.
 ISSUES_QUERIES = [
     "my deployment",
     "my url",
@@ -107,7 +107,7 @@ class GitHubCollector(Collector):
     kind = "api"
     interval = 3600
 
-    def __init__(self, queries: list[str] | None = None, timeout: float = 25.0):
+    def __init__(self, queries: list[str] | None = None, timeout: float = 15.0):
         self.queries = queries or QUERIES
         self.timeout = timeout
 
@@ -185,7 +185,8 @@ class GitHubCollector(Collector):
         Operators frequently open issues on new-api / one-api repos and paste
         their own deployment URL in the body — this surfaces those domains before
         any forum post. Silently skipped when no GitHub token is configured.
-        Sleeps 2 s between requests to share the token quota with code search.
+        Uses one combined OR-query per repo (3 requests), 2 s apart, to share
+        the token quota with code search without serial blow-up.
         """
         if not get_settings().github_token:
             log.debug("github_issues: no token, skipping issues search")
@@ -193,55 +194,54 @@ class GitHubCollector(Collector):
 
         OFFER_KEYWORDS = ("free", "注册", "trial", "免费")
         out: list[Signal] = []
+        # One OR-query per repo (was: one request per term) — 3 requests total.
+        combined = " OR ".join(ISSUES_QUERIES)
 
         for repo in RELAY_REPOS:
-            for query in ISSUES_QUERIES:
-                await asyncio.sleep(2)
-                try:
-                    r = await client.get(
-                        "https://api.github.com/search/issues",
-                        params={
-                            "q": f"{query}+repo:{repo}",
-                            "sort": "created",
-                            "order": "desc",
-                            "per_page": 20,
-                        },
-                        headers=self._headers(),
+            await asyncio.sleep(2)
+            try:
+                r = await client.get(
+                    "https://api.github.com/search/issues",
+                    params={
+                        "q": f"{combined} repo:{repo}",
+                        "sort": "created",
+                        "order": "desc",
+                        "per_page": 30,
+                    },
+                    headers=self._headers(),
+                )
+                if r.status_code != 200:
+                    log.debug(
+                        "github_issues search %s -> %s", repo, r.status_code,
                     )
-                    if r.status_code != 200:
-                        log.debug(
-                            "github_issues search %s/%s -> %s",
-                            repo, query[:30], r.status_code,
-                        )
-                        continue
-                    data = r.json()
-                    for issue in data.get("items", []):
-                        title = issue.get("title") or ""
-                        body = (issue.get("body") or "")[:2000]
-                        html_url = issue.get("html_url")
-                        combined = title + " " + body
-                        urls = _URL_RE.findall(body)
-                        if urls:
-                            body_snippet = body[:500]
-                            for url in urls:
-                                out.append(Signal(
-                                    source="github_issues",
-                                    raw_text=(title + ". " + body_snippet)[:2000],
-                                    url=url,
-                                    source_url=html_url,
-                                ))
-                        elif any(kw in combined for kw in OFFER_KEYWORDS):
+                    continue
+                data = r.json()
+                for issue in data.get("items", []):
+                    title = issue.get("title") or ""
+                    body = (issue.get("body") or "")[:2000]
+                    html_url = issue.get("html_url")
+                    combined_text = title + " " + body
+                    urls = _URL_RE.findall(body)
+                    if urls:
+                        body_snippet = body[:500]
+                        for url in urls:
                             out.append(Signal(
                                 source="github_issues",
-                                raw_text=(title + ". " + body)[:2000],
-                                url=None,
+                                raw_text=(title + ". " + body_snippet)[:2000],
+                                url=url,
                                 source_url=html_url,
                             ))
-                except Exception:
-                    log.debug(
-                        "github_issues query failed: repo=%s q=%s",
-                        repo, query[:30], exc_info=False,
-                    )
+                    elif any(kw in combined_text for kw in OFFER_KEYWORDS):
+                        out.append(Signal(
+                            source="github_issues",
+                            raw_text=(title + ". " + body)[:2000],
+                            url=None,
+                            source_url=html_url,
+                        ))
+            except Exception:
+                log.debug(
+                    "github_issues query failed: repo=%s", repo, exc_info=False,
+                )
 
         log.info("github_issues collected %d items", len(out))
         return out

@@ -6,6 +6,7 @@ with their surrounding text, and let the classifier judge.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Iterable
 from urllib.parse import urljoin, urlparse
 
@@ -92,16 +93,19 @@ class DirectoriesCollector(Collector):
     kind = "scraper"
     interval = 3600
 
-    def __init__(self, pages: dict[str, str] | None = None, timeout: float = 25.0):
+    def __init__(self, pages: dict[str, str] | None = None, timeout: float = 12.0):
         self.pages = pages or PAGES
         self.timeout = timeout
 
     async def collect(self) -> Iterable[Signal]:
-        out: list[Signal] = []
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            for source, url in self.pages.items():
+            async def _one(source: str, url: str) -> list[Signal]:
                 text = await fetch_text(url, client=client, ua=_UA)
-                if text is not None:
-                    out.extend(parse_listing(text, url, source))
+                return parse_listing(text, url, source) if text is not None else []
+
+            results = await asyncio.gather(
+                *(_one(source, url) for source, url in self.pages.items())
+            )
+        out: list[Signal] = [sig for group in results for sig in group]
         log.info("directories collected %d links", len(out))
         return out

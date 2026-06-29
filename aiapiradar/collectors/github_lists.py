@@ -7,6 +7,7 @@ per line that contains an outbound link; the classifier judges each.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 from typing import Iterable
@@ -39,6 +40,10 @@ SEARCH_QUERIES = [
     "免费 api 中转",
     "awesome ai api",
 ]
+
+# Cap on repos discovered at runtime (beyond the seeds) so a single run never
+# fans out into dozens of serial README fetches. Seeds are always harvested.
+MAX_DISCOVERED_REPOS = 8
 
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
 _SKIP_HOSTS = {
@@ -128,29 +133,37 @@ class GitHubListsCollector(Collector):
         return [(key, full) for full, key in found.items()]
 
     async def collect(self) -> Iterable[Signal]:
-        out: list[Signal] = []
         async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers()) as client:
             # Self-expanding repo set: union hardcoded seeds with live search
-            # discoveries for THIS run, deduped by "owner/repo".
+            # discoveries for THIS run, deduped by "owner/repo" and capped.
             repos: list[tuple[str, str]] = list(self.repos)
             seen_repos = {repo for _, repo in repos}
             try:
+                discovered = 0
                 for source, repo in await self._discover_repos(client):
+                    if discovered >= MAX_DISCOVERED_REPOS:
+                        break
                     if repo not in seen_repos:
                         seen_repos.add(repo)
                         repos.append((source, repo))
+                        discovered += 1
             except Exception:
                 log.warning("github_lists discovery failed; using seeds only", exc_info=False)
-            for source, repo in repos:
+
+            async def _readme(source: str, repo: str) -> list[Signal]:
                 try:
                     r = await client.get(f"https://api.github.com/repos/{repo}/readme")
                     if r.status_code != 200:
                         log.warning("readme %s -> %s", repo, r.status_code)
-                        continue
+                        return []
                     content = r.json().get("content", "")
                     text = base64.b64decode(content).decode("utf-8", "replace")
-                    out.extend(parse_readme(text, source, repo=repo))
+                    return parse_readme(text, source, repo=repo)
                 except Exception:
                     log.warning("github_lists repo failed: %s", repo, exc_info=False)
+                    return []
+
+            results = await asyncio.gather(*(_readme(s, r) for s, r in repos))
+        out: list[Signal] = [sig for group in results for sig in group]
         log.info("github_lists collected %d links", len(out))
         return out
