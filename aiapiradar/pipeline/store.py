@@ -26,6 +26,22 @@ log = get_logger("store")
 AGGREGATOR_SOURCES = {"telegram", "telegram_ingest"}
 
 
+def _sanitize_service_name(name: str | None, domain: str | None) -> str | None:
+    """Reject garbage names: slash-paths (HF model IDs), single/two-char strings.
+
+    Falls back to domain. A None return means "use domain at DB layer".
+    """
+    if not name:
+        return None
+    # HF-style model ID: "org/model-name" — use domain instead
+    if "/" in name:
+        return None
+    # Too short to be a real service name
+    if len(name.strip()) < 3:
+        return None
+    return name
+
+
 def compute_lead_hours(first_us, first_agg) -> Optional[float]:
     """Hours the aggregators lagged behind us.  Positive => we were earlier."""
     if not first_us or not first_agg:
@@ -56,7 +72,7 @@ def _get_or_create_service(db: Database, domain: str, clf: Classification) -> in
     db.run(
         "INSERT INTO services (canonical_domain, name, type, models, aliases) "
         "VALUES (?, ?, ?, ?, ?)",
-        [reg, reg, clf.offer_type or "other",
+        [reg, _sanitize_service_name(reg, domain) or reg, clf.offer_type or "other",
          json_encode(clf.models or None), json_encode(aliases or None)],
     )
     return db.execute("SELECT last_insert_rowid() AS id")[0]["id"]
@@ -241,7 +257,7 @@ def persist(
             db.run(
                 "INSERT INTO services (canonical_domain, name, type, status) "
                 "VALUES (?, ?, 'model_release', 'active')",
-                [pseudo, org],
+                [pseudo, _sanitize_service_name(org, None) or org],
             )
             service_id = db.execute("SELECT last_insert_rowid() AS id")[0]["id"]
 

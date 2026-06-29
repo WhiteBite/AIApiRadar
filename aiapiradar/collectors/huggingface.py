@@ -81,6 +81,7 @@ def parse_models(data: list[dict], org_filter: str | None = None) -> list[Signal
             continue
 
         inference = (m.get("inference") or "").lower()
+        is_live = inference in _LIVE_INFERENCE
         text = _build_signal_text(mid, m)
 
         out.append(Signal(
@@ -90,7 +91,10 @@ def parse_models(data: list[dict], org_filter: str | None = None) -> list[Signal
             source_url=f"https://huggingface.co/{mid}",
             meta={
                 "model_release": True,
-                "force_classify": True,
+                # force_classify only for live models — only they are real offers.
+                # Non-live releases go through the normal prefilter and won't pass
+                # (no free-credit keywords in text), which is intentional.
+                **({"force_classify": True} if is_live else {}),
                 "org": org,
                 "model_id": mid,
                 "hf_inference": inference or None,

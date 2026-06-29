@@ -80,24 +80,26 @@ def test_coupon_parse():
 def test_model_release_pipeline(db_env):
     from aiapiradar.pipeline.pipeline import Pipeline
     from aiapiradar.pipeline.classify import HeuristicClassifier
-    from aiapiradar.db import get_db
 
-    hf_sigs = parse_models([{"id": "zai-org/GLM-5.2"}])
     pipe = Pipeline(classifier=HeuristicClassifier())
-    stats = pipe.process_signals(hf_sigs)
-    assert stats.get("model_releases", 0) == 1
 
-    # re-run: same model url -> no duplicate offer
-    pipe.process_signals(parse_models([{"id": "zai-org/GLM-5.2"}]))
-    with get_db() as db:
-        svc = db.execute(
-            "SELECT id, type FROM services WHERE canonical_domain = ?",
-            ["hf/zai-org"],
-        )
-        assert len(svc) == 1
-        assert svc[0]["type"] == "model_release"
-        n_offers = db.execute(
-            "SELECT COUNT(*) AS n FROM offers WHERE service_id = ?",
-            [svc[0]["id"]],
-        )[0]["n"]
-        assert n_offers == 1
+    # Non-live models (no inference status) no longer have force_classify=True,
+    # so they are dropped by the pipeline prefilter — "New model release: ..."
+    # has no free-credit keywords and should not produce any offer/record.
+    non_live = parse_models([{"id": "zai-org/GLM-5.2"}])
+    stats = pipe.process_signals(non_live)
+    assert stats.get("prefiltered_out", 0) == 1
+    assert stats.get("model_releases", 0) == 0
+    assert stats.get("offers_created", 0) == 0
+
+    # Live models (inference=warm) get force_classify=True and their text
+    # includes "free access with HF token" — they pass prefilter and are
+    # classified as an offer.
+    live = parse_models([{"id": "zai-org/GLM-5.2", "inference": "warm"}])
+    stats2 = pipe.process_signals(live)
+    assert stats2.get("classified", 0) == 1
+    assert stats2.get("offers_created", 0) >= 1
+
+    # Re-run: signal dedup (source, source_url) prevents duplicate insertion.
+    stats3 = pipe.process_signals(live)
+    assert stats3.get("dup", 0) == 1

@@ -92,6 +92,23 @@ BLOCKED_DOMAINS = frozenset({
     "wildberries.ru",
     "ozon.ru",
     "avito.ru",
+    # Tech blogs — linked articles are sources of signals, never services.
+    "hackernoon.com",
+    "dev.to",
+    "hashnode.com",
+    "hashnode.dev",
+    "beehiiv.com",
+    "ghost.io",
+    "mirror.xyz",
+    # File/media storage APIs that are not AI services.
+    "filestack.com",
+    "uploadcare.com",
+    "cloudinary.com",
+    "imgix.com",
+    # Newsletter/marketing platforms — occasionally linked in posts.
+    "mailchimp.com",
+    "convertkit.com",
+    # substack.com is already in the list above — not duplicated.
 })
 
 

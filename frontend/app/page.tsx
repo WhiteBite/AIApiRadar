@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const DEFAULT_FILTERS: OffersFilters = {
-  tab: "all", q: "", minAmount: "", model: "", sort: "newest", sinceHours: 24,
+  tab: "all", q: "", minAmount: "", model: "", sort: "newest", sinceHours: 168,
   sourceCategory: "", offerType: "", noReferral: false, engine: "",
 };
 
@@ -88,7 +88,7 @@ function activeFilterCount(f: OffersFilters) {
   if (f.engine) n++;
   if (f.noReferral) n++;
   if (f.model) n++;
-  if (f.sinceHours !== 24) n++;  // non-default window
+  if (f.sinceHours !== 168) n++;  // non-default window
   return n;
 }
 
@@ -143,13 +143,30 @@ export default function FeedPage() {
     }
     if (filters.engine) list = list.filter((o: Offer) => o.engine === filters.engine);
     if (filters.noReferral) list = list.filter((o: Offer) => !o.referral_required);
+
+    // Дедуп по домену: один лучший оффер на домен (по score). Не для вкладки dead.
+    if (filters.tab !== "dead") {
+      const bestByDomain = new Map<string, Offer>();
+      const noDomain: Offer[] = [];
+      for (const o of list) {
+        if (!o.domain) { noDomain.push(o); continue; }
+        const cur = bestByDomain.get(o.domain);
+        if (!cur || o.score > cur.score) bestByDomain.set(o.domain, o);
+      }
+      list = [...bestByDomain.values(), ...noDomain];
+    }
+
+    // Сортировка
     if (filters.sort === "newest") {
       list = [...list].sort((a, b) =>
         (b.first_seen_at ? Date.parse(b.first_seen_at) : 0) -
         (a.first_seen_at ? Date.parse(a.first_seen_at) : 0));
     } else if (filters.sort === "amount") {
       list = [...list].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
+    } else {
+      list = [...list].sort((a, b) => b.score - a.score);
     }
+
     return list;
   }, [data, filters, savedIds, liveOnly]);
 

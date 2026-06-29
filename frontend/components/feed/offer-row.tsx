@@ -28,8 +28,17 @@ const EFFORT_BORDER: Record<string, string> = {
   hard: "border-l-red-500/70",
 };
 
+/** Имя для отображения в строке фида.
+ *  Если name содержит '/' (hf/deepseek-ai) или короче 3 символов —
+ *  это мусор из БД; показываем домен. */
+function displayName(offer: Offer): string {
+  const n = offer.name;
+  if (n && n.length >= 3 && !n.includes("/")) return n;
+  return offer.domain ?? offer.name ?? "—";
+}
+
 export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
-  const domain = offer.domain ?? offer.name ?? "—";
+  const domain = displayName(offer);
   const value = fmtValue(offer.amount, offer.unit, offer.currency);
   const valueColor =
     offer.unit === "credits" ? "text-amber-400"
@@ -74,14 +83,14 @@ export function OfferRow({ offer, isSelected, onSelect }: OfferRowProps) {
 
       {/* line 2: models + source + age */}
       <div className="flex items-center gap-1.5 mt-1 text-[13px] min-w-0 pl-4">
-        <span className="flex-1 min-w-0 truncate text-zinc-400">
+        <span className="flex-1 min-w-0 truncate text-zinc-300">
           {offer.models.length > 0 ? (
             offer.models.slice(0, 4).join(" · ") + (offer.models.length > 4 ? ` +${offer.models.length - 4}` : "")
           ) : (
             <span className="text-zinc-500">—</span>
           )}
         </span>
-        <span className="shrink-0 flex items-center gap-1.5 text-zinc-400">
+        <span className="shrink-0 flex items-center gap-1.5 text-zinc-300">
           {src && <span>{src}</span>}
           {src && <span className="text-zinc-500">·</span>}
           <span className="tabular-nums">{offer.first_seen_at ? timeAgo(offer.first_seen_at) : ""}</span>
